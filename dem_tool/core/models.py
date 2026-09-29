@@ -115,7 +115,11 @@ class Workflow:
 
     @classmethod
     def load(cls, path):
-        return cls.from_dict(json.loads(Path(path).read_text(encoding='utf-8')))
+        data=json.loads(Path(path).read_text(encoding='utf-8'))
+        if data.get('format')=='dem-workflow':
+            from .workflow_bundle import load_bundle
+            return load_bundle(path)[0]
+        return cls.from_dict(data)
 
 
 @dataclass

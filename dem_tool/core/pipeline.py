@@ -76,14 +76,14 @@ class Pipeline:
             if node.enabled:
                 if set(algorithm.ports)-node.inputs.keys():
                     raise ValueError(f'{node.name}: faltan conexiones {set(algorithm.ports)-node.inputs.keys()}.')
-                unknown=set(node.inputs)-algorithm.ports.keys()
+                unknown=set(node.inputs)-algorithm.ports.keys()-algorithm.optional_ports.keys()
                 if node.algorithm=='calculator': unknown -= {'B'}
                 if unknown:
                     raise ValueError(f'{node.name}: puertos desconocidos {unknown}.')
                 for port,ref in node.inputs.items():
                     if ref not in types:
                         raise ValueError(f'{node.name}: entrada {ref} no disponible.')
-                    expected=algorithm.ports.get(port,'raster')
+                    expected=(algorithm.ports|algorithm.optional_ports).get(port,'raster')
                     if types[ref]!=expected and expected!='any':
                         raise ValueError(f'{node.name}: {port} requiere {expected}.')
             types[node.id]=algorithm.output
@@ -93,6 +93,8 @@ class Pipeline:
         project=self.project
         sources=sources or {k:Layer(v,kind='vector' if Path(v).suffix.lower() in ('.gpkg','.shp','.geojson') else 'raster',temporary=False,
                                    metadata={'vertical_unit':project.vertical_unit} if k=='$dem' else {}) for k,v in project.sources.items()}
+        used={ref for n in project.workflow.nodes if n.enabled for ref in n.inputs.values() if ref.startswith('$')}
+        sources={k:v for k,v in sources.items() if k in used}
         report=RunReport()
         run_id=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+'_'+uuid.uuid4().hex[:8]
         log=project.root/'logs'/f'{run_id}.jsonl'

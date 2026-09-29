@@ -1,10 +1,23 @@
 from PySide6.QtCore import Qt,Signal,QRectF
 from PySide6.QtGui import QColor,QPen,QBrush,QPainterPath,QPainter,QFont
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QComboBox,QGraphicsView,QGraphicsScene,QGraphicsRectItem,QGraphicsTextItem,QTableWidget,QTableWidgetItem,QTabWidget,QAbstractItemView
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QComboBox,QGraphicsView,QGraphicsScene,QGraphicsRectItem,QGraphicsTextItem,QTableWidget,QTableWidgetItem,QTabWidget,QAbstractItemView,QToolButton,QMenu,QDialog
 from dem_tool.algorithms import load_algorithms
 
 
 COLORS={'Ready':'#8499ab','Running':'#eeb55e','Completed':'#4dd6ae','Warning':'#f4ce68','Error':'#ed7c80','Blocked':'#677080','Cancelled':'#b28be3'}
+
+
+class WorkflowWindow(QDialog):
+    reattach=Signal()
+    def __init__(self,parent):
+        super().__init__(parent)
+        self.setWindowTitle('Flujo de procesamiento · ventana independiente')
+        self.setWindowFlags(Qt.WindowType.Window|Qt.WindowType.WindowMinMaxButtonsHint|Qt.WindowType.WindowCloseButtonHint)
+        self.resize(1350,750); self.content=QVBoxLayout(self)
+        button=QPushButton('Volver a acoplar al mapa'); button.clicked.connect(self.close); self.content.addWidget(button)
+
+    def closeEvent(self,event):
+        self.reattach.emit(); event.accept()
 
 
 class NodeBox(QGraphicsRectItem):
@@ -27,10 +40,17 @@ class PipelinePanel(QWidget):
     template_requested=Signal(str)
     def __init__(self):
         super().__init__(); layout=QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
-        controls=QHBoxLayout(); self.algorithm=QComboBox()
-        for a in load_algorithms().values():self.algorithm.addItem(f'{a.category} / {a.title}',a.id)
-        self.algorithm.setMinimumWidth(270); controls.addWidget(self.algorithm)
-        add=QPushButton('+ Añadir proceso'); add.clicked.connect(lambda:self.add_requested.emit(self.algorithm.currentData())); controls.addWidget(add)
+        categories=QHBoxLayout(); self.category_buttons={}
+        groups={'preprocessing':'Preprocesamiento','relief':'Relieve','hydrology':'Hidrología','raster_math':'Álgebra raster','vectors':'Vectores','tables':'Cuencas'}
+        for category,title in groups.items():
+            button=QToolButton(); button.setText('+ '+title); button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu=QMenu(button)
+            for a in load_algorithms().values():
+                if a.category==category:
+                    action=menu.addAction(a.title); action.triggered.connect(lambda checked=False,id=a.id:self.add_requested.emit(id))
+            button.setMenu(menu); self.category_buttons[category]=button; categories.addWidget(button)
+        categories.addStretch(); layout.addLayout(categories)
+        controls=QHBoxLayout()
         for title,action in [('Editar / conectar','edit'),('Duplicar','duplicate'),('Eliminar','delete'),('Activar','toggle'),('↑','up'),('↓','down')]:
             b=QPushButton(title); b.clicked.connect(lambda checked=False,a=action:self.action(a)); controls.addWidget(b)
         controls.addStretch(); self.template=QComboBox(); self.template.addItems(['Plantillas…','Relieve básico','Hidrología D8','TPI multiescala','Tres curvaturas']); self.template.activated.connect(lambda i:self.template_requested.emit(self.template.itemText(i)) if i else None); controls.addWidget(self.template)

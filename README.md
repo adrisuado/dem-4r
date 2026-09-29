@@ -44,7 +44,7 @@ mediante `pip install --no-deps -e .`. NumPy se limita a `<2.3` por el uso de
 6. Consulte las capas temporales, seleccione una para ver estadísticas, y use
    **Simbología** para cambiar colores/contraste. Los cambios de estilo no ejecutan
    algoritmos ni alteran el raster.
-7. Use **Workflow → Guardar workflow** para reutilizar exactamente el flujo. Los
+7. Use **Workflow → Exportar flujo completo** para reutilizar exactamente el flujo. Los
    proyectos guardan además rutas, capas y estilos.
 
 La plantilla reproduce:
@@ -66,18 +66,28 @@ reproyección y conecte Fill depressions a su salida si hace falta.
 
 ## Mapa y capas
 
+- El mapa ocupa todo el panel con márgenes fijos. **Llenar vista** aprovecha el
+  espacio manteniendo las proporciones y puede dejar bordes del raster fuera de
+  pantalla. **Ver toda la extensión** o **Extensión completa** muestra el raster
+  completo; no se estira la geografía para rellenar el panel.
 - Rueda para acercar/alejar, herramientas de mano y rectángulo en la barra del mapa.
 - Clic sobre el mapa identifica el valor de la capa seleccionada; las coordenadas
   aparecen en la barra inferior. Desactive pan/zoom para identificar.
 - Marque o desmarque capas para superponer rasters y vectores. El orden visual de
   raster sigue el orden de carga/resultados; los vectores se dibujan por encima.
-- La vista usa una previsualización de hasta 1200 píxeles por lado. Identificación,
-  cálculos y estadísticas usan los datos originales.
+- La vista usa una previsualización de hasta 1200 píxeles por lado. Identificación
+  y procesamiento usan los datos originales. El histograma se carga automáticamente
+  para el raster visible superior, también al abrir un proyecto o cambiar visibilidad.
 - Rampa continua, intervalos iguales, cuantiles o límites manuales; stretch min/max,
   percentiles 2–98 o logaritmo; límites personalizados y opacidad.
 - El logaritmo de visualización oculta valores no positivos únicamente en el mapa.
 - Las estadísticas incluyen población válida/NoData, SD poblacional, mediana y
   percentiles 2/25/50/75/98. El número de bins es configurable de 2 a 1000.
+- Hasta un millón de píxeles las estadísticas son exactas. Para rasters mayores se
+  usa una muestra regular de hasta un millón de píxeles, con aviso visible de
+  aproximación y tamaño de muestra. Los conteos se refieren a esa muestra, no se
+  extrapolan como si fueran conteos exactos de todo el DEM. Esta vista no está
+  limitada por el máximo de celdas del motor de procesamiento.
 - CSV/XLSX de morfometría aparecen como tablas; su GeoPackage auxiliar puede verse
   como vector. Los archivos auxiliares se incluyen en las exportaciones.
 
@@ -88,6 +98,50 @@ conectar**, **Duplicar**, **Eliminar**, **Activar**, **↑** o **↓**. Cambie l
 en el formulario para conectar o desconectar. Se rechazan ciclos; antes de ejecutar
 se comprueban puertos obligatorios y tipos de entrada. Puede guardar nodos sin
 conectar, pero debe completar sus entradas antes de ejecutar.
+
+Las herramientas se organizan en seis botones: **Preprocesamiento**, **Relieve**,
+**Hidrología**, **Álgebra raster**, **Vectores** y **Cuencas**. Cada uno abre solo
+los procesos de su grupo. **Abrir flujo en otra ventana** permite maximizar el
+editor y conservar el mapa aparte. Cerrar esa ventana o pulsar **Volver a acoplar**
+devuelve el mismo editor al mapa sin perder nodos ni estados de ejecución.
+
+## Exportar y reutilizar un flujo completo
+
+**Workflow → Exportar flujo completo** guarda un `.demflow.json` con todos los
+nodos, conexiones, parámetros, nombres, tipos de salida, políticas y variables de
+entrada. Es una receta portátil; los rasters y vectores se eligen en el destino,
+no se incrustan ni se copian dentro del archivo.
+
+Al usar **Importar / reutilizar flujo**, un formulario permite reemplazar `$dem`,
+`$mask` y cualquier otra entrada conectada. **Parámetros reutilizables** permite
+modificar CRS de destino, radios, buffers, reglas y demás valores sin reconstruir
+el grafo. **Entradas y variables** abre el mismo formulario sobre el flujo actual.
+Los flujos JSON de la versión anterior siguen siendo compatibles. **Guardar JSON
+clásico** conserva el formato anterior cuando se necesita.
+
+`examples/relieve_por_mascara.demflow.json` incluye recorte geográfico con buffer,
+reproyección, suavizado, pendiente, reclasificación, poligonización y disolución.
+Reasigne DEM y máscara al importarlo. Su CRS inicial EPSG:32718 corresponde a UTM
+18 sur; revise ese parámetro si reutiliza la plantilla en otra zona.
+
+## Recortes y márgenes en metros
+
+**Recortar por máscara** admite DEM y vector geográficos o proyectados. Un buffer
+en metros se aplica en las unidades lineales del CRS proyectado, o mediante una
+proyección azimutal equidistante local cuando el DEM está en coordenadas geográficas.
+La máscara se transforma al CRS del DEM y la salida conserva su cuadrícula y CRS.
+
+**Recortar por extensión** permite conectar un vector en `extent` o seleccionarlo
+directamente desde el formulario. Se lee su extensión en el CRS del DEM. También
+puede escribir límites e indicar su CRS en **CRS de la extensión**. **Ampliar
+extensión** expande los cuatro lados en metros: en un DEM geográfico, se transforma
+la envolvente a un CRS métrico local y de vuelta con bordes densificados. No se usa
+una constante universal de metros por grado. El margen local admite áreas de hasta
+30° por eje; la salida se limita a los píxeles existentes del raster.
+
+El recorte conserva coordenadas geográficas cuando la entrada es geográfica. Las
+pendientes y demás derivadas métricas siguen requiriendo un nodo **Reproyectar**
+antes de su cálculo; la plantilla por máscara ya incluye ese paso.
 
 La selección de un nodo sirve como entrada inicial al añadir otro. Cada entrada
 tiene su propio selector: las operaciones de varios rasters no asumen que todos
@@ -159,9 +213,13 @@ visualizar en Simbología; use **Extraer banda** para encadenarla a otro algorit
 
 ### Reclasificación y calculadora
 
-Reglas `[desde,hasta,valor,incluir_hasta]`: `[a,b)` por defecto; `[a,b]` con última
-casilla True. Se rechazan intervalos solapados. CSV de reglas:
-`from,to,value,include_to`. Valores no cubiertos: NoData o conservar original.
+Cada regla tiene límites, valor e **Intervalo** seleccionable: `[a,b>`, `<a,b]`,
+`[a,b]` o `<a,b>`. Los corchetes incluyen el extremo y los signos angulares lo
+excluyen. En JSON se guardan las formas equivalentes `[a,b)`, `(a,b]`, `[a,b]` y
+`(a,b)`. Se rechazan solapamientos, incluyendo un límite compartido cerrado en
+ambas clases. CSV nuevo: `from,to,value,interval`. Los CSV anteriores con
+`include_to` y workflows con booleanos siguen siendo compatibles. Valores no
+cubiertos: NoData o conservar original.
 
 ```text
 A - mean(A)
@@ -236,9 +294,12 @@ exporta todos. Por nodo: heredar, temporal o siempre. «Siempre» prevalece incl
 sobre «Ninguno». Cada ejecución usa una carpeta nueva para evitar sobrescrituras.
 Nombres: `{prefijo}{input}_{nodo}{sufijo}_{id}`; el ID evita colisiones.
 
-Salidas Float64 por defecto, Float32 e Int32 configurables. Int32 rechaza valores
-fraccionarios. NoData automático = NaN en flotantes y mínimo Int32 en enteros;
-sentinela configurable con detección de colisiones. Se conserva máscara válida.
+Salidas Float64 por defecto. Tipos disponibles: Float32, Float64, Int8, UInt8,
+Int16, UInt16, Int32 y UInt32. Los enteros rechazan fracciones y desbordamientos.
+NoData automático = NaN en flotantes; en enteros se busca un sentinela libre. Si
+todo el rango de un entero está ocupado, se conserva NoData mediante máscara
+explícita, sin invalidar el cero u otra clase existente. Puede configurar un
+sentinela explícito, con detección de colisiones y validación del rango.
 Cada resultado tiene metadatos JSON, versiones, inputs, parámetros, unidades, CRS,
 resolución, fecha, duración y advertencias. Los logs registran también fallos.
 

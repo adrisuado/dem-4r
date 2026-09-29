@@ -7,6 +7,7 @@ from rasterio.windows import from_bounds, Window
 from scipy import ndimage as ndi
 from dem_tool.io.raster_io import read_raster, spatial_info
 from .registry import register
+from dem_tool.io.spatial import expand_bounds, buffered_vector
 
 
 @register('select_band','Extraer banda','preprocessing',{'band':1},engine='Rasterio/GDAL',
@@ -38,15 +39,27 @@ def warp(inputs, p, ctx):
     return ctx.raster(out, profile, inputs['dem'].metadata.copy())
 
 
-@register('clip', 'Recortar por extensión', 'preprocessing', {'bounds': []}, engine='Rasterio/GDAL',
-          help='Extensión [xmin, ymin, xmax, ymax] en el CRS del raster. Vacío conserva la extensión.')
+@register('clip', 'Recortar por extensión', 'preprocessing', {'bounds': [], 'bounds_crs':'', 'expand_m':0.0},
+          optional_ports={'extent':'vector'}, engine='Rasterio/GDAL',
+          help='Conecte un vector en extent o escriba [xmin,ymin,xmax,ymax]. Su CRS se transforma al del DEM. El margen amplía los cuatro lados en metros.')
 def clip(inputs, p, ctx):
     with rasterio.open(inputs['dem'].path) as src:
+        if not src.crs:raise ValueError('El raster necesita CRS para interpretar la extensión.')
         window = Window(0, 0, src.width, src.height)
-        if p['bounds']:
-            if len(p['bounds']) != 4 or p['bounds'][0] >= p['bounds'][2] or p['bounds'][1] >= p['bounds'][3]:
+        bounds=p['bounds']
+        if 'extent' in inputs:
+            frame=gpd.read_file(inputs['extent'].path)
+            if frame.crs is None or frame.empty:raise ValueError('El vector de extensión está vacío o no tiene CRS.')
+            bounds=frame.to_crs(src.crs).total_bounds.tolist()
+        elif bounds and p['bounds_crs']:
+            from rasterio.warp import transform_bounds
+            bounds=list(transform_bounds(p['bounds_crs'],src.crs,*bounds,densify_pts=64))
+        if not bounds:bounds=list(src.bounds)
+        if bounds:
+            if len(bounds) != 4 or bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
                 raise ValueError('Extensión inválida.')
-            w = from_bounds(*p['bounds'], transform=src.transform)
+            bounds=expand_bounds(bounds,src.crs,p['expand_m'])
+            w = from_bounds(*bounds, transform=src.transform)
             c0, r0 = int(np.floor(w.col_off)), int(np.floor(w.row_off))
             c1, r1 = int(np.ceil(w.col_off+w.width)), int(np.ceil(w.row_off+w.height))
             window = Window(c0, r0, c1-c0, r1-r0).intersection(window)
@@ -65,10 +78,7 @@ def clip_mask(inputs, p, ctx):
     with rasterio.open(inputs['dem'].path) as src:
         if not src.crs:
             raise ValueError('El raster no tiene CRS.')
-        vector = vector.to_crs(src.crs)
-        if p['buffer_m']:
-            info = spatial_info(src.profile, True)
-            vector.geometry = vector.buffer(p['buffer_m'] / info['meters_per_unit'])
+        vector = buffered_vector(vector,p['buffer_m'],src.crs)
         a, t = mask(src, vector.geometry, crop=True, filled=False)
         profile = src.profile.copy()
         profile.update(transform=t)

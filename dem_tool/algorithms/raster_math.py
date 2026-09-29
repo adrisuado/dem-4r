@@ -3,6 +3,7 @@ import operator
 import numpy as np
 from .registry import register
 from dem_tool.io.raster_io import read_raster, align_check
+from .intervals import INTERVALS,validate_rules
 
 FUNCTIONS = {'min': np.nanmin, 'max': np.nanmax, 'mean': np.nanmean,
              'median': np.nanmedian, 'std': np.nanstd, 'percentile': np.nanpercentile,
@@ -79,20 +80,17 @@ def calculator(inputs,p,ctx):
 
 
 @register('reclassify','Reclasificar','raster_math',
-          {'rules':[[0,5,1,False],[5,15,2,False],[15,30,3,False],[30,90,4,True]], 'unmatched':'nodata'},
-          help='Reglas [desde, hasta, valor, incluir_hasta]; intervalo [a,b) o [a,b]. No se permiten solapamientos.')
+          {'rules':[[0,5,1,'[a,b)'],[5,15,2,'[a,b)'],[15,30,3,'[a,b)'],[30,90,4,'[a,b]']], 'unmatched':'nodata'},
+          help='Elija extremos abiertos o cerrados por fila: [a,b), (a,b], [a,b] o (a,b). Se rechazan límites compartidos incluidos en ambas clases.')
 def reclassify(inputs,p,ctx):
     a,profile=read_raster(inputs['dem'].path)
     if p['unmatched'] not in ('nodata','keep'):
         raise ValueError('Valores no cubiertos: nodata o keep.')
     out=a.copy() if p['unmatched']=='keep' else np.full_like(a,np.nan)
-    rules=sorted(p['rules'],key=lambda r:r[0])
-    for i,r in enumerate(rules):
-        if len(r)!=4 or r[0]>=r[1] or not all(np.isfinite(r[j]) for j in (0,1,2)) or not isinstance(r[3],bool):
-            raise ValueError('Regla inválida: [desde, hasta, valor, booleano].')
-        if i and (rules[i-1][1]>r[0] or (rules[i-1][1]==r[0] and rules[i-1][3])):
-            raise ValueError('Los intervalos de reclasificación se superponen.')
-        select=(a>=r[0]) & ((a<=r[1]) if r[3] else (a<r[1]))
+    rules=validate_rules(p['rules'])
+    for r in rules:
+        closed_left,closed_right=INTERVALS[r[3]]
+        select=((a>=r[0]) if closed_left else (a>r[0])) & ((a<=r[1]) if closed_right else (a<r[1]))
         out[select]=r[2]
     out[~np.isfinite(a)]=np.nan
     return ctx.raster(out,profile,{'units':'class','rules':rules})

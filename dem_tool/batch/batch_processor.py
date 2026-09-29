@@ -43,13 +43,14 @@ def validate_batch(items,workflow):
 
 
 class BatchProcessor:
-    def __init__(self,workflow,root,workers=1,cancel=None,on_event=None,vertical_unit='m'):
+    def __init__(self,workflow,root,workers=1,cancel=None,on_event=None,vertical_unit='m',sources=None):
         self.workflow=workflow
         self.root=Path(root)
         self.workers=max(1,min(int(workers),8))
         self.cancel=cancel or threading.Event()
         self.on_event=on_event or (lambda *args:None)
         self.vertical_unit=vertical_unit
+        self.sources=dict(sources or {})
 
     def run(self,items):
         self.root.mkdir(parents=True,exist_ok=True)
@@ -57,7 +58,7 @@ class BatchProcessor:
         def one(i,item):
             if self.cancel.is_set(): return {'status':'Cancelled'}
             root=self.root/f'{i+1:03d}_{safe_name(Path(item.dem).stem)}'
-            sources={'$dem':item.dem}
+            sources=self.sources|{'$dem':item.dem}
             if item.mask: sources['$mask']=item.mask
             project=Project(root,Workflow.from_dict(asdict(self.workflow)),sources,vertical_unit=self.vertical_unit)
             project.save()

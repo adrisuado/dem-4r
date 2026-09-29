@@ -20,15 +20,17 @@ from dem_tool.batch.batch_processor import BatchProcessor,BatchItem,import_csv,v
 from .map_view import MapView
 from .statistics_panel import StatisticsPanel
 from .layer_panel import LayerPanel
-from .pipeline_panel import PipelinePanel
+from .pipeline_panel import PipelinePanel,WorkflowWindow
 from .dialogs import NodeDialog,StyleDialog
+from .workflow_dialog import WorkflowVariablesDialog
+from dem_tool.core.workflow_bundle import export_bundle,load_bundle
 
 
 STYLE='''
 QMainWindow, QWidget { background:#111c2d; color:#dae6ef; font-family:"DejaVu Sans"; font-size:12px; }
 QMenuBar,QMenu,QToolBar,QTabBar::tab { background:#17263a; }
 QMenu::item:selected,QTabBar::tab:selected { background:#254356; }
-QPushButton { background:#263c51; border:1px solid #385469; border-radius:5px; padding:7px 10px; }
+QPushButton,QToolButton { background:#263c51; border:1px solid #385469; border-radius:5px; padding:7px 10px; }
 QPushButton:hover { background:#34566a; }
 QPushButton:disabled { color:#748394; background:#192637; }
 QPushButton#run { background:#147d70; border:1px solid #4ed5bc; font-weight:600; }
@@ -58,7 +60,7 @@ class Worker(QThread):
             else:
                 root=self.project.root/'batch'/datetime.now().strftime('%Y%m%d_%H%M%S_%f')
                 report=BatchProcessor(self.project.workflow,root,self.workers,self.cancel,
-                    self.event.emit,self.project.vertical_unit).run(self.items)
+                    self.event.emit,self.project.vertical_unit,sources=self.project.sources).run(self.items)
             self.completed.emit(report)
         except Exception as exc:self.failed.emit(str(exc))
 
@@ -97,7 +99,10 @@ class MainWindow(QMainWindow):
         self.batch_table=QTableWidget(0,5); self.batch_table.setHorizontalHeaderLabels(['DEM','Máscara (doble clic)','Estado','Progreso','Salida']); self.batch_table.cellDoubleClicked.connect(self.batch_mask); bl.addWidget(self.batch_table)
         self.batch_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         bl.addWidget(QLabel('CSV: columnas dem,mask. Rutas relativas al CSV. El lote reutiliza exactamente el workflow inferior.'))
-        pipeline_holder=QWidget(); pl=QVBoxLayout(pipeline_holder); pl.setContentsMargins(0,0,0,0); title=QLabel('FLUJO DE PROCESAMIENTO'); title.setObjectName('section'); pl.addWidget(title)
+        pipeline_holder=QWidget(); pl=QVBoxLayout(pipeline_holder); pl.setContentsMargins(0,0,0,0)
+        self.pipeline_holder=pipeline_holder; self.pipeline_layout=pl; self.graph_window=None
+        heading=QHBoxLayout(); title=QLabel('FLUJO DE PROCESAMIENTO'); title.setObjectName('section'); heading.addWidget(title); heading.addStretch()
+        self.detach_button=QPushButton('Abrir flujo en otra ventana'); self.detach_button.clicked.connect(self.toggle_graph_window); heading.addWidget(self.detach_button); pl.addLayout(heading)
         self.pipeline=PipelinePanel(); pl.addWidget(self.pipeline); vertical.addWidget(pipeline_holder); vertical.setSizes([460,440])
         runbar=QHBoxLayout(); outer.addLayout(runbar); runbar.addWidget(QLabel('Exportación:')); self.policy=QComboBox()
         for label,key in [('Ninguno','none'),('Finales','final'),('Detallado','detailed')]:self.policy.addItem(label,key)
@@ -109,12 +114,13 @@ class MainWindow(QMainWindow):
         self.cancel_button=QPushButton('■ Cancelar'); self.cancel_button.setEnabled(False); self.cancel_button.clicked.connect(self.cancel); runbar.addWidget(self.cancel_button)
         self.log=QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(85); self.log.setPlaceholderText('Registro de ejecución, advertencias y errores'); outer.addWidget(self.log)
         self.layers.selected.connect(self.select_layer); self.layers.visibility_changed.connect(lambda:self.map.draw_layers(self.project.layers,True)); self.map.message.connect(self.statusBar().showMessage)
+        self.map.plotted_raster.connect(self.on_plotted_raster)
         self.pipeline.add_requested.connect(self.add_node); self.pipeline.edit_requested.connect(self.edit_node); self.pipeline.action_requested.connect(self.node_action); self.pipeline.template_requested.connect(self.template)
         self.create_menu(); self.refresh()
 
     def create_menu(self):
         for title,items in [('Archivo',[('Nuevo proyecto',self.new_project),('Abrir proyecto',self.open_project),('Guardar proyecto',self.save_project)]),
-                            ('Workflow',[('Cargar workflow',self.load_workflow),('Guardar workflow',self.save_workflow)]),
+                            ('Workflow',[('Importar / reutilizar flujo…',self.load_workflow),('Exportar flujo completo…',self.export_workflow),('Entradas y variables…',self.configure_workflow),('Guardar JSON clásico',self.save_workflow)]),
                             ('Ayuda',[('Manual de uso',self.help)])]:
             menu=self.menuBar().addMenu(title)
             for text,fn in items:
@@ -131,6 +137,26 @@ class MainWindow(QMainWindow):
         self.pipeline.show_workflow(self.project.workflow,self.statuses)
 
     def inform(self,text):QMessageBox.warning(self,'DEM Workflows',str(text))
+
+    def on_plotted_raster(self,layer):
+        self.statistics.show_layer(layer)
+        if layer:self.selected_layer=layer; self.map.selected=layer
+
+    def toggle_graph_window(self):
+        if self.graph_window and self.graph_window.isVisible():self.graph_window.close(); return
+        if self.graph_window is None:
+            self.graph_window=WorkflowWindow(self); self.graph_window.reattach.connect(self.attach_graph)
+        self.pipeline_layout.removeWidget(self.pipeline)
+        self.graph_window.content.addWidget(self.pipeline)
+        self.pipeline_holder.setMaximumHeight(55)
+        self.detach_button.setText('Volver a acoplar el flujo')
+        self.graph_window.show(); self.pipeline.show(); self.pipeline.fit()
+
+    def attach_graph(self):
+        self.graph_window.content.removeWidget(self.pipeline); self.pipeline_layout.addWidget(self.pipeline)
+        self.pipeline_holder.setMaximumHeight(16777215)
+        self.pipeline_holder.parentWidget().setSizes([460,440])
+        self.pipeline.show(); self.detach_button.setText('Abrir flujo en otra ventana')
 
     def add_dem(self):
         if self.busy():return
@@ -192,9 +218,12 @@ class MainWindow(QMainWindow):
 
     def node_dialog(self,node,is_new=False):
         if self.busy():return
-        dialog=NodeDialog(node,self.project.workflow,self.project.sources,self)
+        dialog=NodeDialog(node,self.project.workflow,self.project.sources,self.graph_window if self.graph_window and self.graph_window.isVisible() else self)
         if dialog.exec()==QDialog.DialogCode.Accepted:
             updated=dialog.result_node
+            self.project.sources.update(dialog.new_sources)
+            for key,path in dialog.new_sources.items():
+                if path not in [l.path for l in self.project.layers]:self.project.layers.append(Layer(path,kind='vector',temporary=False,visible=False))
             if is_new:self.project.workflow.nodes.append(updated)
             else:self.project.workflow.nodes=[updated if n.id==node.id else n for n in self.project.workflow.nodes]
             self.statuses={}; self.pipeline.show_workflow(self.project.workflow)
@@ -309,7 +338,6 @@ class MainWindow(QMainWindow):
                     kind='raster' if path.endswith('.tif') else 'vector' if path.endswith('.gpkg') else 'table'
                     self.project.layers.append(Layer(path,kind=kind,temporary=False,visible=False)); existing.add(path)
             self.refresh()
-            if report.results:self.select_layer(list(report.results.values())[-1])
             self.log.append(f'{len(report.results)} resultados · {len(report.cache_hits)} reutilizados · {len(report.exports)} exportados · {len(report.errors)} errores. Log: {report.log}')
         self.project.save()
 
@@ -335,11 +363,41 @@ class MainWindow(QMainWindow):
                 self.save_project(); self.project=Project.load(path); self.z_unit.setCurrentText(self.project.vertical_unit); self.policy.setCurrentIndex(self.policy.findData(self.project.workflow.export_policy)); self.statuses={}; self.refresh()
             except Exception as exc:self.inform(exc)
 
+    def apply_workflow_bindings(self,dialog):
+        self.project.workflow=dialog.result_workflow
+        self.project.sources.update(dialog.result_sources)
+        self.project.vertical_unit=dialog.result_unit; self.z_unit.setCurrentText(dialog.result_unit)
+        for layer in self.project.layers:layer.visible=False
+        for key,path in dialog.result_sources.items():
+            existing=next((l for l in self.project.layers if l.path==path),None)
+            if existing:existing.visible=True
+            else:
+                self.project.layers.append(Layer(path,kind=dialog.variables[key]['kind'],temporary=False))
+        self.policy.setCurrentIndex(self.policy.findData(self.project.workflow.export_policy)); self.statuses={}; self.refresh()
+
+    def configure_workflow(self):
+        if self.busy():return
+        self.sync()
+        dialog=WorkflowVariablesDialog(self.project.workflow,self.project.sources,self.project.vertical_unit,parent=self)
+        if dialog.exec()==QDialog.DialogCode.Accepted:self.apply_workflow_bindings(dialog)
+
+    def export_workflow(self):
+        if self.busy():return
+        self.sync(); path,_=QFileDialog.getSaveFileName(self,'Exportar flujo completo',str(self.project.root/'workflows'/'flujo.demflow.json'),'Flujo reutilizable (*.demflow.json)')
+        if path:
+            try:
+                export_bundle(path,self.project.workflow,self.project.sources,self.project.vertical_unit)
+                self.log.append('Flujo completo exportado. Los insumos se reasignan al importar: '+path)
+            except Exception as exc:self.inform(exc)
+
     def load_workflow(self):
         if self.busy():return
-        path,_=QFileDialog.getOpenFileName(self,'Abrir workflow','','JSON (*.json)')
+        path,_=QFileDialog.getOpenFileName(self,'Importar / reutilizar flujo','','Flujos (*.json)')
         if path:
-            try:self.project.workflow=Workflow.load(path); self.policy.setCurrentIndex(self.policy.findData(self.project.workflow.export_policy)); self.statuses={}; self.refresh()
+            try:
+                workflow,variables,unit=load_bundle(path)
+                dialog=WorkflowVariablesDialog(workflow,self.project.sources,unit,variables,self)
+                if dialog.exec()==QDialog.DialogCode.Accepted:self.apply_workflow_bindings(dialog)
             except Exception as exc:self.inform(exc)
 
     def save_workflow(self):
@@ -404,3 +462,4 @@ class MainWindow(QMainWindow):
                 if target.parent==root and target.name=='temporary':shutil.rmtree(target); target.mkdir()
                 self.project.layers=[l for l in self.project.layers if not l.temporary]; self.project.save()
         event.accept()
+        if self.graph_window:self.graph_window.hide()

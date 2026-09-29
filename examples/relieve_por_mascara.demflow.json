@@ -1,0 +1,159 @@
+{
+  "format": "dem-workflow",
+  "bundle_version": 1,
+  "workflow": {
+    "nodes": [
+      {
+        "algorithm": "clip_mask",
+        "inputs": {
+          "dem": "$dem",
+          "mask": "$mask"
+        },
+        "parameters": {
+          "buffer_m": 30
+        },
+        "name": "recorte",
+        "id": "clip",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "reproject",
+        "inputs": {
+          "dem": "clip"
+        },
+        "parameters": {
+          "crs": "EPSG:32718"
+        },
+        "name": "DEM_UTM",
+        "id": "projected",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "smooth",
+        "inputs": {
+          "dem": "projected"
+        },
+        "parameters": {
+          "iterations": 2
+        },
+        "name": "smooth",
+        "id": "smooth",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "slope",
+        "inputs": {
+          "dem": "smooth"
+        },
+        "parameters": {
+          "units": "percent"
+        },
+        "name": "slope",
+        "id": "slope",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "reclassify",
+        "inputs": {
+          "dem": "slope"
+        },
+        "parameters": {
+          "rules": [
+            [
+              0,
+              5,
+              1,
+              "[a,b)"
+            ],
+            [
+              5,
+              15,
+              2,
+              "[a,b)"
+            ],
+            [
+              15,
+              30,
+              3,
+              "[a,b)"
+            ],
+            [
+              30,
+              200,
+              4,
+              "[a,b]"
+            ]
+          ]
+        },
+        "name": "reclassify",
+        "id": "classes",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "uint8",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "polygonize",
+        "inputs": {
+          "dem": "classes"
+        },
+        "parameters": {},
+        "name": "polygonize",
+        "id": "polygons",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "dissolve",
+        "inputs": {
+          "vector": "polygons"
+        },
+        "parameters": {},
+        "name": "dissolve",
+        "id": "dissolved",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      }
+    ],
+    "name": "Relieve por máscara · entradas reemplazables",
+    "export_policy": "final",
+    "prefix": "",
+    "suffix": "",
+    "schema_version": 1
+  },
+  "variables": {
+    "$dem": {
+      "kind": "raster",
+      "used_by": [
+        "recorte / dem"
+      ],
+      "required": true,
+      "file_hint": ""
+    },
+    "$mask": {
+      "kind": "vector",
+      "used_by": [
+        "recorte / mask"
+      ],
+      "required": true,
+      "file_hint": ""
+    }
+  },
+  "vertical_unit": "m"
+}

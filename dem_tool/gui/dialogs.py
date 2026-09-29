@@ -4,17 +4,20 @@ from dataclasses import replace
 from pathlib import Path
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QDialogButtonBox,
     QLabel,QLineEdit,QComboBox,QCheckBox,QSpinBox,QDoubleSpinBox,QScrollArea,QWidget,
-    QTableWidget,QTableWidgetItem,QPushButton,QFileDialog,QMessageBox)
+    QTableWidget,QTableWidgetItem,QPushButton,QFileDialog,QMessageBox,QHeaderView)
 from dem_tool.algorithms import load_algorithms
 from dem_tool.algorithms.raster_math import validate_expression
 from dem_tool.core.models import Symbology
+from dem_tool.io.raster_io import OUTPUT_DTYPES
+from dem_tool.algorithms.intervals import normalize_interval,validate_rules,INTERVALS
 
 LABELS={'method':'Método','radius':'Radio','iterations':'Iteraciones','max_gap':'Tamaño máximo del gap (píxeles)',
     'keep_large':'Conservar huecos mayores','kernel':'Kernel (lado impar)','sigma':'Sigma','nodata':'Tratamiento NoData',
     'vertical_unit':'Unidad vertical','z_factor':'Factor Z adicional','edges':'Bordes','units':'Unidad de salida',
     'unit':'Unidad de escala / umbral','shape':'Forma de vecindad','standardize':'Estandarizar TPI',
     'crs':'CRS de destino','resolution':'Resolución destino (0 = automática)','resampling':'Remuestreo',
-    'bounds':'Extensión [xmin,ymin,xmax,ymax]','kind':'Tipo de curvatura','azimuth':'Azimut solar (°)',
+    'bounds':'Extensión [xmin,ymin,xmax,ymax]','bounds_crs':'CRS de la extensión (vacío = DEM)','expand_m':'Ampliar extensión (m por lado)',
+    'rules':'Reglas','kind':'Tipo de curvatura','azimuth':'Azimut solar (°)',
     'altitude':'Altitud solar (°)','expression':'Expresión','threshold':'Umbral contribuyente',
     'vector':'Generar drenaje vectorial','strahler':'Generar orden Strahler','shreve':'Generar magnitud Shreve','resolve_flats':'Resolver planos',
     'epsilon':'Incremento mínimo de planos (m)','max_depth':'Profundidad máxima (m; 0 = sin límite)',
@@ -31,7 +34,8 @@ CHOICES={'vertical_unit':['inherit','m','ft','us-ft'],'output_unit':['m','ft','u
 class RulesTable(QWidget):
     def __init__(self,rules):
         super().__init__(); layout=QVBoxLayout(self); self.table=QTableWidget(0,4)
-        self.table.setHorizontalHeaderLabels(['Desde','Hasta','Valor','Incluir hasta']); layout.addWidget(self.table)
+        self.table.setHorizontalHeaderLabels(['Desde','Hasta','Valor','Intervalo']); layout.addWidget(self.table)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         row=QHBoxLayout(); layout.addLayout(row)
         for title,callback in [('+ Fila',lambda:self.add([0,1,1,False])),('− Fila',self.remove),('Importar CSV',self.import_csv),('Exportar CSV',self.export_csv)]:
             button=QPushButton(title); button.clicked.connect(callback); row.addWidget(button)
@@ -40,7 +44,12 @@ class RulesTable(QWidget):
 
     def add(self,rule):
         r=self.table.rowCount(); self.table.insertRow(r)
-        for c,v in enumerate(rule):self.table.setItem(r,c,QTableWidgetItem(str(v)))
+        for c,v in enumerate(rule[:3]):self.table.setItem(r,c,QTableWidgetItem(str(v)))
+        interval=QComboBox()
+        for label,value in [('[a, b>','[a,b)'),('<a, b]','(a,b]'),('[a, b]','[a,b]'),('<a, b>','(a,b)')]:interval.addItem(label,value)
+        interval.setToolTip('[ ] incluye el extremo; < > lo excluye. Cada fila tiene su propia selección.')
+        interval.setCurrentIndex(interval.findData(normalize_interval(rule[3])))
+        self.table.setCellWidget(r,3,interval)
 
     def remove(self):
         if self.table.currentRow()>=0:self.table.removeRow(self.table.currentRow())
@@ -48,8 +57,8 @@ class RulesTable(QWidget):
     def value(self):
         out=[]
         for r in range(self.table.rowCount()):
-            cells=[self.table.item(r,c).text() if self.table.item(r,c) else '' for c in range(4)]
-            out.append([float(cells[0]),float(cells[1]),float(cells[2]),cells[3].strip().lower() in ('true','1','si','sí')])
+            cells=[self.table.item(r,c).text() if self.table.item(r,c) else '' for c in range(3)]
+            out.append([float(cells[0]),float(cells[1]),float(cells[2]),self.table.cellWidget(r,3).currentData()])
         return out
 
     def import_csv(self):
@@ -58,7 +67,7 @@ class RulesTable(QWidget):
             try:
                 with open(path,encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
                 self.table.setRowCount(0)
-                for r in rows:self.add([float(r['from']),float(r['to']),float(r['value']),r['include_to'].lower() in ('true','1')])
+                for r in rows:self.add([float(r['from']),float(r['to']),float(r['value']),r.get('interval',r.get('include_to','false').lower() in ('true','1'))])
             except Exception as exc:QMessageBox.warning(self,'CSV',str(exc))
 
     def export_csv(self):
@@ -66,7 +75,7 @@ class RulesTable(QWidget):
         if path:
             try:
                 with open(path,'w',encoding='utf-8',newline='') as f:
-                    w=csv.writer(f); w.writerow(['from','to','value','include_to']); w.writerows(self.value())
+                    w=csv.writer(f); w.writerow(['from','to','value','interval']); w.writerows(self.value())
             except Exception as exc:QMessageBox.warning(self,'CSV',str(exc))
 
 
@@ -83,13 +92,16 @@ class NodeDialog(QDialog):
         if '$dem' not in sources:choices.insert(0,('$dem · DEM activo','$dem'))
         if '$mask' not in sources:choices.append(('$mask · Máscara del lote','$mask'))
         choices += [(f'{n.name} · {n.id}',n.id) for n in workflow.nodes if n.id!=node.id]
-        ports=list(algorithm.ports)
+        ports=list(algorithm.ports)+list(algorithm.optional_ports)
         if node.algorithm=='calculator':ports.append('B')
         for port in ports:
             combo=QComboBox(); combo.addItem('Desconectado',None)
             for label,key in choices:combo.addItem(label,key)
             idx=combo.findData(node.inputs.get(port)); combo.setCurrentIndex(max(0,idx)); self.ports[port]=combo
             form.addRow(f'Entrada {port}',combo)
+            if port in ('extent','mask'):
+                browse=QPushButton('Seleccionar capa vectorial…')
+                browse.clicked.connect(lambda checked=False,key=port:self.choose_vector(key)); form.addRow('',browse)
         self.controls={}
         params=algorithm.defaults|node.parameters
         for key,value in params.items():
@@ -104,11 +116,15 @@ class NodeDialog(QDialog):
             elif isinstance(value,int):widget=QSpinBox(); widget.setRange(-1000000000,1000000000); widget.setValue(value)
             elif isinstance(value,float):widget=QDoubleSpinBox(); widget.setDecimals(8); widget.setRange(-1e12,1e12); widget.setValue(value)
             else:widget=QLineEdit(json.dumps(value) if isinstance(value,list) else str(value))
-            self.controls[key]=(widget,value); form.addRow(LABELS.get(key,key),widget)
+            self.controls[key]=(widget,value)
+            if key=='rules':form.addRow(QLabel('Reglas')); form.addRow(widget)
+            else:form.addRow(LABELS.get(key,key),widget)
         self.export=QComboBox()
         for title,key in [('Heredar política global','inherit'),('Temporal','temporary'),('Exportar siempre','always')]:self.export.addItem(title,key)
         self.export.setCurrentIndex(max(0,self.export.findData(node.export))); form.addRow('Exportación',self.export)
-        self.dtype=QComboBox(); self.dtype.addItems(['float64','float32','int32']); self.dtype.setCurrentText(node.output_dtype)
+        self.dtype=QComboBox()
+        for dtype in OUTPUT_DTYPES:self.dtype.addItem(dtype.upper(),dtype)
+        self.dtype.setCurrentIndex(self.dtype.findData(node.output_dtype))
         self.nodata=QLineEdit('' if node.output_nodata is None else str(node.output_nodata))
         if algorithm.output=='raster':
             form.addRow('Tipo de salida',self.dtype); form.addRow('NoData salida (vacío = auto)',self.nodata)
@@ -117,6 +133,21 @@ class NodeDialog(QDialog):
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
         preview=buttons.addButton('Vista previa',QDialogButtonBox.ButtonRole.ActionRole); preview.clicked.connect(self.preview)
         buttons.accepted.connect(self.save); buttons.rejected.connect(self.reject); outer.addWidget(buttons)
+        self.new_sources={}
+
+    def choose_vector(self,port):
+        path,_=QFileDialog.getOpenFileName(self,'Vector de '+port,'','Vector (*.gpkg *.shp *.geojson)')
+        if path:
+            try:
+                import geopandas as gpd
+                frame=gpd.read_file(path)
+                if frame.empty or not frame.crs:raise ValueError('Vector vacío o sin CRS.')
+                key='$'+port+'_'+self.node.id
+                self.new_sources[key]=str(Path(path).resolve())
+                combo=self.ports[port]; existing=combo.findData(key)
+                if existing<0:combo.addItem(key+' · '+Path(path).name,key); existing=combo.count()-1
+                combo.setCurrentIndex(existing)
+            except Exception as exc:QMessageBox.warning(self,'Vector',str(exc))
 
     def build(self):
         parameters={}
@@ -128,10 +159,11 @@ class NodeDialog(QDialog):
             else:value=json.loads(w.text()) if isinstance(original,list) else w.text()
             parameters[key]=value
         if self.node.algorithm=='calculator':validate_expression(parameters['expression'])
+        if self.node.algorithm=='reclassify':parameters['rules']=validate_rules(parameters['rules'])
         updated=replace(self.node,name=self.name.text().strip() or self.node.algorithm,
             inputs={k:c.currentData() for k,c in self.ports.items() if c.currentData()},parameters=parameters,
             enabled=self.enabled.isChecked(),export=self.export.currentData())
-        updated.output_dtype=self.dtype.currentText(); updated.output_nodata=float(self.nodata.text()) if self.nodata.text() else None
+        updated.output_dtype=self.dtype.currentData(); updated.output_nodata=float(self.nodata.text()) if self.nodata.text() else None
         from dem_tool.core.models import Workflow
         test=Workflow(nodes=[updated if n.id==updated.id else n for n in self.workflow.nodes])
         if not any(n.id==updated.id for n in test.nodes):test.nodes.append(updated)

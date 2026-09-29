@@ -7,18 +7,24 @@ from matplotlib.figure import Figure
 from matplotlib.colors import Normalize, LogNorm, BoundaryNorm
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget,QVBoxLayout
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QComboBox,QLabel
 import geopandas as gpd
 
 
 class MapView(QWidget):
     message=Signal(str)
+    plotted_raster=Signal(object)
     def __init__(self):
         super().__init__()
-        self.figure=Figure(facecolor='#111c2d',layout='constrained')
+        self.figure=Figure(facecolor='#111c2d')
+        self.figure.subplots_adjust(left=.065,right=.985,bottom=.09,top=.975)
         self.canvas=FigureCanvasQTAgg(self.figure)
         self.ax=self.figure.add_subplot(111)
         self.toolbar=NavigationToolbar2QT(self.canvas,self)
+        self.framing=QComboBox(); self.framing.addItem('Llenar vista','fill'); self.framing.addItem('Ver toda la extensión','fit')
+        self.framing.setToolTip('Llenar vista conserva las proporciones y puede recortar bordes. Extensión completa muestra todos los datos.')
+        self.toolbar.addWidget(self.framing)
+        self.framing.currentIndexChanged.connect(lambda:self.frame_extent())
         layout=QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.toolbar); layout.addWidget(self.canvas)
         self.layers=[]; self.selected=None; self.crs=None; self.bounds={}; self.cache={}
@@ -26,6 +32,7 @@ class MapView(QWidget):
         self.canvas.mpl_connect('button_press_event',self.identify)
         self.canvas.mpl_connect('scroll_event',self.scroll)
         self.draw_layers([])
+        self.canvas.mpl_connect('resize_event',lambda e:self.frame_extent() if self.bounds else None)
 
     def draw_layers(self,layers,preserve=False):
         old=(self.ax.get_xlim(),self.ax.get_ylim()) if preserve and self.layers else None
@@ -34,6 +41,7 @@ class MapView(QWidget):
         for spine in self.ax.spines.values(): spine.set_color('#334258')
         visible=[l for l in layers if l.visible and l.kind in ('raster','vector') and Path(l.path).exists()]
         self.crs=None
+        last_raster=None
         for l in visible:
             if l.kind=='raster':
                 with rasterio.open(l.path) as src: self.crs=src.crs
@@ -73,6 +81,7 @@ class MapView(QWidget):
                     self.ax.imshow(np.ma.masked_invalid(data),extent=(b.left,b.right,b.bottom,b.top),origin='upper',
                                    cmap=cmap,norm=norm,alpha=style.opacity,interpolation='nearest',zorder=visible.index(l)+1)
                     self.bounds[l.path]=(b.left,b.bottom,b.right,b.top)
+                    last_raster=l
                 else:
                     if key not in self.cache:
                         frame=gpd.read_file(l.path)
@@ -91,17 +100,26 @@ class MapView(QWidget):
             self.ax.text(.5,.44,'Añade un DEM para explorar el relieve\ny construir un flujo reproducible.',
                          transform=self.ax.transAxes,ha='center',color='#8b9caf',fontsize=12,linespacing=1.7)
             self.ax.set_xticks([]); self.ax.set_yticks([])
-        self.ax.set_aspect('equal',adjustable='box')
+        self.ax.set_aspect('equal',adjustable='datalim')
         if old: self.ax.set_xlim(old[0]); self.ax.set_ylim(old[1])
-        elif self.bounds: self.full_extent()
+        elif self.bounds: self.frame_extent(last_raster)
         self.canvas.draw_idle()
+        self.plotted_raster.emit(last_raster)
 
     def full_extent(self,layer=None):
+        self.framing.blockSignals(True); self.framing.setCurrentIndex(1); self.framing.blockSignals(False)
+        self.frame_extent(layer)
+
+    def frame_extent(self,layer=None):
         values=[self.bounds[layer.path]] if layer and layer.path in self.bounds else list(self.bounds.values())
         if values:
             b=np.asarray(values); xmin,ymin=b[:,:2].min(axis=0); xmax,ymax=b[:,2:].max(axis=0)
-            pad=max(xmax-xmin,ymax-ymin)*.02 or 1
-            self.ax.set_xlim(xmin-pad,xmax+pad); self.ax.set_ylim(ymin-pad,ymax+pad); self.canvas.draw_idle()
+            width,height=max(xmax-xmin,1e-12),max(ymax-ymin,1e-12)
+            ratio=self.ax.bbox.width/max(self.ax.bbox.height,1)
+            size=max(height,width/ratio) if self.framing.currentData()=='fit' else min(height,width/ratio)
+            size*=1.04 if self.framing.currentData()=='fit' else 1.0
+            cx,cy=(xmin+xmax)/2,(ymin+ymax)/2
+            self.ax.set_xlim(cx-size*ratio/2,cx+size*ratio/2); self.ax.set_ylim(cy-size/2,cy+size/2); self.canvas.draw_idle()
 
     def coordinates(self,event):
         if event.inaxes==self.ax and event.xdata is not None:
