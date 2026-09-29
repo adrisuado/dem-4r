@@ -1,0 +1,135 @@
+{
+  "nodes": [
+    {
+      "algorithm": "reproject",
+      "inputs": {
+        "dem": "$dem"
+      },
+      "parameters": {
+        "crs": "EPSG:32718"
+      },
+      "name": "reproject",
+      "id": "reproject",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "clip",
+      "inputs": {
+        "dem": "reproject"
+      },
+      "parameters": {
+        "bounds": []
+      },
+      "name": "clip",
+      "id": "clip",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "smooth",
+      "inputs": {
+        "dem": "clip"
+      },
+      "parameters": {
+        "iterations": 2
+      },
+      "name": "smooth",
+      "id": "smooth",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "slope",
+      "inputs": {
+        "dem": "smooth"
+      },
+      "parameters": {},
+      "name": "slope",
+      "id": "slope",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "reclassify",
+      "inputs": {
+        "dem": "slope"
+      },
+      "parameters": {},
+      "name": "reclassify",
+      "id": "classes",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "polygonize",
+      "inputs": {
+        "dem": "classes"
+      },
+      "parameters": {},
+      "name": "polygonize",
+      "id": "polygons",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "dissolve",
+      "inputs": {
+        "vector": "polygons"
+      },
+      "parameters": {},
+      "name": "dissolve",
+      "id": "dissolve",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "tpi",
+      "inputs": {
+        "dem": "smooth"
+      },
+      "parameters": {
+        "radius": 500,
+        "unit": "meters"
+      },
+      "name": "TPI_500m",
+      "id": "tpi",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "curvature",
+      "inputs": {
+        "dem": "smooth"
+      },
+      "parameters": {},
+      "name": "curvature",
+      "id": "curvature",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    }
+  ],
+  "name": "Relieve reproducible",
+  "export_policy": "final",
+  "prefix": "",
+  "suffix": "",
+  "schema_version": 1
+}

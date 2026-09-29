@@ -1,0 +1,61 @@
+{
+  "nodes": [
+    {
+      "algorithm": "fill_depressions",
+      "inputs": {
+        "dem": "$dem"
+      },
+      "parameters": {},
+      "name": "fill_depressions",
+      "id": "fill",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "flow_direction",
+      "inputs": {
+        "dem": "fill"
+      },
+      "parameters": {},
+      "name": "flow_direction",
+      "id": "direction",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "flow_accumulation",
+      "inputs": {
+        "direction": "direction"
+      },
+      "parameters": {},
+      "name": "flow_accumulation",
+      "id": "accumulation",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    },
+    {
+      "algorithm": "streams",
+      "inputs": {
+        "accumulation": "accumulation"
+      },
+      "parameters": {},
+      "name": "streams",
+      "id": "streams",
+      "enabled": true,
+      "export": "inherit",
+      "output_dtype": "float64",
+      "output_nodata": null
+    }
+  ],
+  "name": "Hidrología D8",
+  "export_policy": "final",
+  "prefix": "",
+  "suffix": "",
+  "schema_version": 1
+}
