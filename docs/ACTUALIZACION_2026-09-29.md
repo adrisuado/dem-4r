@@ -76,9 +76,10 @@ Se incluye `examples/relieve_por_mascara.demflow.json`: recorte por máscara,
 reproyección, suavizado, pendiente porcentual, reclasificación UINT8, poligonización
 y disolución. Su CRS inicial es EPSG:32718; ajústelo cuando cambie de zona.
 
-El recorte geográfico conserva EPSG:4326. Para pendiente/curvaturas y otras medidas
-métricas se mantiene la validación de CRS proyectado. Por ello la plantilla incluye
-Reproyectar después del recorte, antes de las derivadas. La expansión métrica local
+El recorte geográfico conserva EPSG:4326. La actualización posterior permite
+pendiente directamente en geográficas; curvaturas y otras medidas métricas mantienen
+la validación de CRS proyectado. La plantilla conserva su paso de reproyección.
+La expansión métrica local
 se limita a extensiones menores de 30° por eje; no es una operación geodésica global.
 
 Las estadísticas muestreadas describen la banda completa representada, no solo el

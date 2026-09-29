@@ -8,6 +8,7 @@ import json
 import shutil
 import threading
 import time
+import tempfile
 import uuid
 
 from dem_tool import __version__
@@ -62,6 +63,14 @@ class Pipeline:
 
     def validate(self,sources):
         ordered=self.project.workflow.ordered()
+        self.project.validate_output_directory()
+        terminal=self.project.workflow.terminal_ids()
+        if any(n.enabled and (n.export=='always' or (n.export=='inherit' and
+               (self.project.workflow.export_policy=='detailed' or
+                (self.project.workflow.export_policy=='final' and n.id in terminal)))) for n in ordered):
+            self.project.output_root.mkdir(parents=True,exist_ok=True)
+            with tempfile.TemporaryFile(dir=self.project.output_root) as probe:
+                probe.write(b'output directory check'); probe.flush()
         types={k:v.kind for k,v in sources.items()}
         for key,layer in sources.items():
             if not Path(layer.path).is_file():
@@ -199,7 +208,7 @@ class Pipeline:
     def export_result(self,result,node,run_id,report):
         category='vectors' if result.kind=='vector' else 'tables' if result.kind=='table' else self.registry[node.algorithm].category
         if category not in ('vectors','tables','hydrology'): category='relief'
-        folder=self.project.root/category/run_id
+        folder=self.project.output_root/category/run_id
         folder.mkdir(parents=True,exist_ok=True)
         source=Path(self.project.sources.get('$dem','DEM')).stem
         w=self.project.workflow

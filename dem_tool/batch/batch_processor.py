@@ -43,7 +43,7 @@ def validate_batch(items,workflow):
 
 
 class BatchProcessor:
-    def __init__(self,workflow,root,workers=1,cancel=None,on_event=None,vertical_unit='m',sources=None):
+    def __init__(self,workflow,root,workers=1,cancel=None,on_event=None,vertical_unit='m',sources=None,output_directory=None):
         self.workflow=workflow
         self.root=Path(root)
         self.workers=max(1,min(int(workers),8))
@@ -51,6 +51,7 @@ class BatchProcessor:
         self.on_event=on_event or (lambda *args:None)
         self.vertical_unit=vertical_unit
         self.sources=dict(sources or {})
+        self.output_directory=Path(output_directory).resolve() if output_directory else None
 
     def run(self,items):
         self.root.mkdir(parents=True,exist_ok=True)
@@ -60,13 +61,14 @@ class BatchProcessor:
             root=self.root/f'{i+1:03d}_{safe_name(Path(item.dem).stem)}'
             sources=self.sources|{'$dem':item.dem}
             if item.mask: sources['$mask']=item.mask
-            project=Project(root,Workflow.from_dict(asdict(self.workflow)),sources,vertical_unit=self.vertical_unit)
+            output=str(self.output_directory/root.name) if self.output_directory else None
+            project=Project(root,Workflow.from_dict(asdict(self.workflow)),sources,vertical_unit=self.vertical_unit,output_directory=output)
             project.save()
             try:
                 report=Pipeline(project,self.cancel,lambda n,s,m:self.on_event(i,n,s,m)).run()
                 project.layers=list(report.results.values()); project.save()
                 status='Error' if report.errors else 'Cancelled' if self.cancel.is_set() else 'Completed'
-                return {'status':status,'errors':report.errors,'output':str(root),'exports':report.exports}
+                return {'status':status,'errors':report.errors,'output':str(project.output_root),'project':str(root),'exports':report.exports}
             except Exception as exc:
                 self.on_event(i,'','Error',str(exc))
                 return {'status':'Error','errors':{'validation':str(exc)},'output':str(root)}

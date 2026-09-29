@@ -129,7 +129,7 @@ class NodeDialog(QDialog):
         if algorithm.output=='raster':
             form.addRow('Tipo de salida',self.dtype); form.addRow('NoData salida (vacío = auto)',self.nodata)
         if node.algorithm=='slope':
-            note=QLabel('La pendiente porcentual puede superar 100 %. Los DEM geográficos deben reproyectarse.'); note.setWordWrap(True); form.addRow(note)
+            note=QLabel('Admite DEM geográficos: calcula distancias en metros sobre el elipsoide según la latitud, sin reproyectar. Declare la unidad vertical correcta. La pendiente porcentual puede superar 100 %.'); note.setWordWrap(True); form.addRow(note)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
         preview=buttons.addButton('Vista previa',QDialogButtonBox.ButtonRole.ActionRole); preview.clicked.connect(self.preview)
         buttons.accepted.connect(self.save); buttons.rejected.connect(self.reject); outer.addWidget(buttons)

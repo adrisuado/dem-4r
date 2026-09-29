@@ -83,3 +83,36 @@ def test_vector_extent_picker_creates_reusable_input(tmp_path,dem,monkeypatch):
     dialog.choose_vector('extent')
     result=dialog.build()
     assert result.inputs['extent']=='$extent_c' and dialog.new_sources['$extent_c']==str(vector)
+
+
+def test_output_picker_persists_and_worker_exports_there(tmp_path,dem,monkeypatch):
+    from pathlib import Path
+    from PySide6.QtWidgets import QFileDialog
+    from PySide6.QtCore import QEventLoop,QTimer
+    app=QApplication.instance() or QApplication([])
+    p=Project(tmp_path/'project',Workflow(nodes=[ProcessingNode('slope',id='s')]),{'$dem':dem[0]})
+    window=MainWindow(p); window.show(); app.processEvents()
+    output=tmp_path/'chosen folder'; output.mkdir()
+    monkeypatch.setattr(QFileDialog,'getExistingDirectory',lambda *args:str(output))
+    window.choose_output.click()
+    assert window.output_path.text()==str(output)
+    assert Project.load(p.root/'project.json').output_root==output
+    reports=[]
+    window.execute(); window.worker.completed.connect(reports.append)
+    assert not window.choose_output.isEnabled()
+    loop=QEventLoop(); window.worker.finished.connect(loop.quit); QTimer.singleShot(30000,loop.quit); loop.exec()
+    assert not window.worker.isRunning(); app.processEvents()
+    assert reports and not reports[0].errors and reports[0].exports
+    assert all(Path(f).is_relative_to(output) for f in reports[0].exports)
+    assert window.choose_output.isEnabled()
+    # Manual layer export starts from the same output destination.
+    captured=[]
+    def save_dialog(*args):
+        captured.append(args[2]); return ('','')
+    monkeypatch.setattr(QFileDialog,'getSaveFileName',save_dialog)
+    window.selected_layer=next(iter(reports[0].results.values())); window.export_selected()
+    assert Path(captured[0]).parent==output
+    window.reset_output.click()
+    assert window.output_path.text()==str(p.root)
+    assert Project.load(p.root/'project.json').output_directory is None
+    window.hide(); window.deleteLater(); app.processEvents()

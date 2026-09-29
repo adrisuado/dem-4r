@@ -1,18 +1,51 @@
 import numpy as np
 from scipy import ndimage as ndi
 import rasterio
+from pyproj import CRS
 from .registry import register
 from .preprocessing import local_mean
 from dem_tool.io.raster_io import read_raster, spatial_info, VERTICAL_TO_METERS
 
 
-def metric_dem(layer, p, ctx):
+def slope_distances(profile):
+    """Metric cell sizes on the original grid; geographic sizes vary by row."""
+    info = spatial_info(profile)
+    crs = CRS(profile['crs'])
+    if not crs.is_geographic:
+        return spatial_info(profile, True) | {'distance_model': 'projected'}
+    t = profile['transform']
+    if abs(t.b) > 1e-10 or abs(t.d) > 1e-10 or t.a <= 0 or t.e >= 0:
+        raise ValueError('Reproyecte/rectifique el raster a una cuadrícula orientada al norte.')
+    axes = {axis.direction: axis for axis in crs.axis_info}
+    if 'east' not in axes or 'north' not in axes:
+        raise ValueError('El CRS geográfico debe tener ejes de longitud este y latitud norte.')
+    # CRS angular units are converted to degrees for Geod (including grads).
+    xscale = np.degrees(axes['east'].unit_conversion_factor)
+    yscale = np.degrees(axes['north'].unit_conversion_factor)
+    width, height = t.a*xscale, -t.e*yscale
+    lat = (t.f + (np.arange(profile['height']) + .5)*t.e)*yscale
+    bounds = np.array([t.f, t.f + profile['height']*t.e])*yscale
+    if (not np.isfinite([width, height, *bounds]).all() or not 0 < width < 180
+            or not 0 < height < 180 or np.any(abs(bounds) > 90 + 1e-9)):
+        raise ValueError('Extensión/resolución geográfica inválida: compruebe el CRS y las latitudes [-90, 90].')
+    geod = crs.get_geod()
+    zeros = np.zeros_like(lat)
+    dx = geod.inv(zeros, lat, np.full_like(lat, width), lat)[2]
+    dy = geod.inv(zeros, np.clip(lat-height/2, -90, 90),
+                  zeros, np.clip(lat+height/2, -90, 90))[2]
+    if not (np.isfinite(dx).all() and np.isfinite(dy).all()) or np.any(dx <= 0) or np.any(dy <= 0):
+        raise ValueError('No se pueden calcular distancias geodésicas para esta cuadrícula.')
+    return info | {'dx_m': dx[:, None], 'dy_m': dy[:, None],
+                   'distance_model': 'geodesic_per_row', 'ellipsoid': crs.ellipsoid.name}
+
+
+def metric_dem(layer, p, ctx, geographic=False):
     a, profile = read_raster(layer.path)
-    info = spatial_info(profile, True)
+    info = slope_distances(profile) if geographic else spatial_info(profile, True)
     unit = p.get('vertical_unit', 'inherit')
     if unit == 'inherit':
         unit = layer.metadata.get('vertical_unit', ctx.vertical_unit)
-    if unit not in VERTICAL_TO_METERS or p.get('z_factor', 1) <= 0:
+    if unit not in VERTICAL_TO_METERS or not np.isfinite(p.get('z_factor', 1)) or p.get('z_factor', 1) <= 0:
         raise ValueError('Declare unidad vertical válida y factor Z positivo.')
     return a * VERTICAL_TO_METERS[unit] * p.get('z_factor', 1), profile, info
 
@@ -25,11 +58,11 @@ def derivatives(a, info, method='horn', edges='nodata'):
     mode = 'nearest' if edges == 'local' else 'constant'
     filled = np.where(valid, a, 0)
     if method == 'horn':
-        gx = ndi.correlate(filled, np.array([[-1,0,1],[-2,0,2],[-1,0,1]]) / (8*dx), mode=mode)
-        gy = ndi.correlate(filled, np.array([[1,2,1],[0,0,0],[-1,-2,-1]]) / (8*dy), mode=mode)
+        gx = ndi.correlate(filled, np.array([[-1,0,1],[-2,0,2],[-1,0,1]], dtype=float), mode=mode) / (8*dx)
+        gy = ndi.correlate(filled, np.array([[1,2,1],[0,0,0],[-1,-2,-1]], dtype=float), mode=mode) / (8*dy)
     elif method == 'zevenbergen_thorne':
-        gx = ndi.correlate(filled, np.array([[0,0,0],[-1,0,1],[0,0,0]]) / (2*dx), mode=mode)
-        gy = ndi.correlate(filled, np.array([[0,1,0],[0,0,0],[0,-1,0]]) / (2*dy), mode=mode)
+        gx = ndi.correlate(filled, np.array([[0,0,0],[-1,0,1],[0,0,0]], dtype=float), mode=mode) / (2*dx)
+        gy = ndi.correlate(filled, np.array([[0,1,0],[0,0,0],[0,-1,0]], dtype=float), mode=mode) / (2*dy)
     else:
         raise ValueError('Método: horn o zevenbergen_thorne.')
     keep = ndi.minimum_filter(valid.astype(int), size=3, mode=mode, cval=0).astype(bool)
@@ -41,9 +74,9 @@ COMMON = {'vertical_unit': 'inherit', 'z_factor': 1.0, 'edges': 'nodata'}
 
 
 @register('slope', 'Pendiente', 'relief', COMMON | {'method': 'horn', 'units': 'degrees'},
-          help='Pendiente Horn o Zevenbergen–Thorne; porcentaje puede superar 100 %.')
+          help='Pendiente Horn o Zevenbergen–Thorne. En coordenadas geográficas usa distancias geodésicas por fila sin reproyectar. Porcentaje puede superar 100 %.')
 def slope(inputs, p, ctx):
-    a, profile, info = metric_dem(inputs['dem'], p, ctx)
+    a, profile, info = metric_dem(inputs['dem'], p, ctx, geographic=True)
     gx, gy, _ = derivatives(a, info, p['method'], p['edges'])
     gradient = np.hypot(gx, gy)
     if p['units'] == 'degrees':
@@ -53,7 +86,12 @@ def slope(inputs, p, ctx):
         ctx.warnings.append('Pendiente porcentual puede superar 100 %.')
     else:
         raise ValueError('Unidad de pendiente: degrees o percent.')
-    return ctx.raster(out, profile, {'units': p['units'], 'method': p['method']})
+    metadata = {'units': p['units'], 'method': p['method'], 'distance_model': info['distance_model']}
+    if 'ellipsoid' in info:
+        metadata.update(ellipsoid=info['ellipsoid'],
+                        cell_width_m_range=[float(info['dx_m'].min()), float(info['dx_m'].max())],
+                        cell_height_m_range=[float(info['dy_m'].min()), float(info['dy_m'].max())])
+    return ctx.raster(out, profile, metadata)
 
 
 @register('aspect', 'Orientación / aspect', 'relief', COMMON | {'method': 'horn'})

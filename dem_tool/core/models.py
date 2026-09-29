@@ -129,13 +129,25 @@ class Project:
     sources: dict[str, str] = field(default_factory=dict)
     layers: list[Layer] = field(default_factory=list)
     vertical_unit: str = 'm'
+    output_directory: str | None = None
 
     def __post_init__(self):
         self.root = Path(self.root).resolve()
         for folder in ('workflows', 'input', 'temporary', 'relief', 'hydrology', 'vectors', 'tables', 'logs'):
             (self.root / folder).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def output_root(self):
+        return (self.root / Path(self.output_directory).expanduser()).resolve() if self.output_directory else self.root
+
+    def validate_output_directory(self):
+        if self.output_root.is_relative_to(self.root/'temporary'):
+            raise ValueError('Seleccione una carpeta fuera de temporary: esa carpeta se puede limpiar al cerrar el proyecto.')
+        if self.output_root.exists() and not self.output_root.is_dir():
+            raise ValueError('La salida debe ser una carpeta, no un archivo.')
+
     def save(self):
+        self.validate_output_directory()
         def relative(path):
             try:
                 return str(Path(path).relative_to(self.root))
@@ -147,7 +159,8 @@ class Project:
         atomic_json(self.root / 'project.json', {
             'schema_version': 1, 'workflow': asdict(self.workflow),
             'sources': {k: relative(v) for k, v in self.sources.items()},
-            'layers': layers, 'vertical_unit': self.vertical_unit})
+            'layers': layers, 'vertical_unit': self.vertical_unit,
+            'output_directory': relative(self.output_root) if self.output_directory else None})
 
     @classmethod
     def load(cls, path):
@@ -161,4 +174,5 @@ class Project:
             layer['path'] = absolute(layer['path'])
         return cls(path.parent, Workflow.from_dict(d['workflow']),
                    {k: absolute(v) for k, v in d['sources'].items()},
-                   [Layer(**l) for l in d['layers']], d.get('vertical_unit', 'm'))
+                   [Layer(**l) for l in d['layers']], d.get('vertical_unit', 'm'),
+                   absolute(d['output_directory']) if d.get('output_directory') else None)

@@ -16,9 +16,10 @@ vectores y pysheds de hidrología. No se implementa un enrutador hidrológico pr
   automáticamente; «siempre» prevalece incluso sobre la política global Ninguno.
 - Los productos múltiples se expresan como nodos separados o artefactos auxiliares
   declarados. La plantilla de curvaturas crea tres nodos reutilizando la entrada.
-- Los DEM geográficos deben reproyectarse para operaciones métricas. Un factor Z
-  constante no corrige la variación latitudinal del tamaño del grado. Las unidades
-  verticales se declaran y se convierten; no se deducen del CRS horizontal.
+- Pendiente admite DEM geográficos usando distancias geodésicas X/Y por fila en
+  el elipsoide del CRS (PyProj/PROJ), sobre la cuadrícula original. Las restantes
+  derivadas métricas requieren reproyección. Un factor Z constante no corrige la
+  variación latitudinal del grado; las unidades verticales se declaran y convierten.
 - Se aceptan píxeles rectangulares con distancias X/Y separadas. Los rasters rotados
   deben rectificarse mediante reproyección antes de calcular derivadas.
 - NoData se representa internamente como NaN; las salidas llevan máscara explícita.
@@ -36,6 +37,9 @@ vectores y pysheds de hidrología. No se implementa un enrutador hidrológico pr
 calcula hashes de archivos/parámetros/versiones, administra caché persistente y
 exporta. `Project` guarda fuentes, capas, estilos y workflow en JSON versionado.
 Los logs JSONL incluyen errores y tiempos, y cada salida recibe un sidecar JSON.
+`Project.output_directory` es opcional: los proyectos antiguos exportan en su raíz.
+La carpeta elegida solo cambia los productos permanentes; caché y logs conservan su
+ubicación. Los lotes propagan el destino por ejecución y fila, con rutas distintas.
 Las escrituras de manifiestos son atómicas; la caché solo acepta resultados completos.
 
 La GUI contiene árbol de capas, mapa Matplotlib/Qt, estadísticas/histograma,

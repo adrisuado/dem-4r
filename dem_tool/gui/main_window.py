@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt,QThread,Signal,QUrl
 from PySide6.QtGui import QAction,QDesktopServices,QFontDatabase,QFont
 from PySide6.QtWidgets import (QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
     QSplitter,QTabWidget,QComboBox,QFileDialog,QMessageBox,QInputDialog,QTextEdit,
-    QProgressBar,QTableWidget,QTableWidgetItem,QSpinBox,QDialog,QToolBar)
+    QProgressBar,QTableWidget,QTableWidgetItem,QSpinBox,QDialog,QToolBar,QLineEdit)
 from dem_tool.core.models import Project,Workflow,ProcessingNode,Layer
 from dem_tool.core.pipeline import Pipeline,export_layer
 from dem_tool.core.templates import relief_template,hydrology_template
@@ -59,8 +59,9 @@ class Worker(QThread):
                 report=Pipeline(self.project,self.cancel,lambda n,s,m:self.event.emit(-1,n,s,m)).run()
             else:
                 root=self.project.root/'batch'/datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                output=self.project.output_root/'batch'/root.name if self.project.output_directory else None
                 report=BatchProcessor(self.project.workflow,root,self.workers,self.cancel,
-                    self.event.emit,self.project.vertical_unit,sources=self.project.sources).run(self.items)
+                    self.event.emit,self.project.vertical_unit,sources=self.project.sources,output_directory=output).run(self.items)
             self.completed.emit(report)
         except Exception as exc:self.failed.emit(str(exc))
 
@@ -104,11 +105,16 @@ class MainWindow(QMainWindow):
         heading=QHBoxLayout(); title=QLabel('FLUJO DE PROCESAMIENTO'); title.setObjectName('section'); heading.addWidget(title); heading.addStretch()
         self.detach_button=QPushButton('Abrir flujo en otra ventana'); self.detach_button.clicked.connect(self.toggle_graph_window); heading.addWidget(self.detach_button); pl.addLayout(heading)
         self.pipeline=PipelinePanel(); pl.addWidget(self.pipeline); vertical.addWidget(pipeline_holder); vertical.setSizes([460,440])
+        outputbar=QHBoxLayout(); outer.addLayout(outputbar); outputbar.addWidget(QLabel('Carpeta de salida:'))
+        self.output_path=QLineEdit(); self.output_path.setReadOnly(True); self.output_path.setAccessibleName('Carpeta de salida'); outputbar.addWidget(self.output_path,1)
+        self.choose_output=QPushButton('Elegir carpeta…'); self.choose_output.clicked.connect(self.choose_output_directory); outputbar.addWidget(self.choose_output)
+        self.reset_output=QPushButton('Usar proyecto'); self.reset_output.clicked.connect(self.reset_output_directory); outputbar.addWidget(self.reset_output)
+        self.folder=QPushButton('Abrir salida'); self.folder.clicked.connect(self.open_output_directory); outputbar.addWidget(self.folder)
+        self.output_path.setToolTip('Los archivos exportados se organizan por categoría y ejecución. Los temporales y registros permanecen en el proyecto.')
         runbar=QHBoxLayout(); outer.addLayout(runbar); runbar.addWidget(QLabel('Exportación:')); self.policy=QComboBox()
         for label,key in [('Ninguno','none'),('Finales','final'),('Detallado','detailed')]:self.policy.addItem(label,key)
         self.policy.setCurrentIndex(self.policy.findData(self.project.workflow.export_policy)); runbar.addWidget(self.policy)
         self.naming=QPushButton('Prefijo / sufijo'); self.naming.clicked.connect(self.configure_names); runbar.addWidget(self.naming)
-        self.folder=QPushButton('Abrir carpeta del proyecto'); self.folder.clicked.connect(lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project.root)))); runbar.addWidget(self.folder)
         self.progress=QProgressBar(); self.progress.setRange(0,100); runbar.addWidget(self.progress,1)
         self.run_button=QPushButton('▶ Ejecutar'); self.run_button.setObjectName('run'); self.run_button.clicked.connect(self.execute); runbar.addWidget(self.run_button)
         self.cancel_button=QPushButton('■ Cancelar'); self.cancel_button.setEnabled(False); self.cancel_button.clicked.connect(self.cancel); runbar.addWidget(self.cancel_button)
@@ -133,8 +139,39 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         self.project_label.setText(self.project.root.name+'   /   '+self.project.workflow.name)
+        self.refresh_output_directory()
         self.layers.populate(self.project.layers,self.project.sources); self.map.draw_layers(self.project.layers)
         self.pipeline.show_workflow(self.project.workflow,self.statuses)
+
+    def refresh_output_directory(self):
+        self.output_path.setText(str(self.project.output_root)); self.output_path.setCursorPosition(0)
+        self.reset_output.setEnabled(bool(self.project.output_directory) and not self.busy())
+
+    def choose_output_directory(self):
+        if self.busy():return
+        path=QFileDialog.getExistingDirectory(self,'Elegir carpeta para los resultados',str(self.project.output_root))
+        if path:
+            previous=self.project.output_directory
+            try:
+                self.project.output_directory=str(Path(path).resolve())
+                self.project.validate_output_directory()
+                self.sync(); self.project.save(); self.refresh_output_directory()
+            except Exception as exc:
+                self.project.output_directory=previous; self.inform(exc)
+
+    def reset_output_directory(self):
+        if self.busy():return
+        previous=self.project.output_directory
+        try:
+            self.project.output_directory=None; self.sync(); self.project.save(); self.refresh_output_directory()
+        except Exception as exc:
+            self.project.output_directory=previous; self.inform(exc)
+
+    def open_output_directory(self):
+        try:
+            self.project.output_root.mkdir(parents=True,exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project.output_root)))
+        except Exception as exc:self.inform(exc)
 
     def inform(self,text):QMessageBox.warning(self,'DEM Workflows',str(text))
 
@@ -204,7 +241,7 @@ class MainWindow(QMainWindow):
     def export_selected(self):
         if not self.selected_layer:return
         layer=self.selected_layer; extension=Path(layer.path).suffix
-        path,_=QFileDialog.getSaveFileName(self,'Exportar capa',str(self.project.root/(layer.name+extension)),f'Archivo (*{extension})')
+        path,_=QFileDialog.getSaveFileName(self,'Exportar capa',str(self.project.output_root/(layer.name+extension)),f'Archivo (*{extension})')
         if path:
             try:export_layer(layer,path); self.log.append('Exportado: '+path)
             except Exception as exc:self.inform(exc)
@@ -284,7 +321,7 @@ class MainWindow(QMainWindow):
         if self.mode.currentIndex()==0 and '$dem' not in self.project.sources:self.inform('Carga un DEM.'); return
         try:
             self.project.workflow.ordered(); self.project.save()
-            snapshot=Project(self.project.root,Workflow.from_dict(asdict(self.project.workflow)),dict(self.project.sources),vertical_unit=self.project.vertical_unit)
+            snapshot=Project(self.project.root,Workflow.from_dict(asdict(self.project.workflow)),dict(self.project.sources),vertical_unit=self.project.vertical_unit,output_directory=self.project.output_directory)
             if preview:
                 ids={preview}; changed=True
                 while changed:
@@ -300,6 +337,7 @@ class MainWindow(QMainWindow):
             self.worker=Worker(snapshot,list(self.batch_items) if batch else None,self.parallel.value())
             self.worker.event.connect(self.on_event); self.worker.completed.connect(self.on_complete); self.worker.failed.connect(self.on_failure); self.worker.finished.connect(self.unlock)
             self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.pipeline.setEnabled(False); self.policy.setEnabled(False); self.z_unit.setEnabled(False); self.mode.tabBar().setEnabled(False)
+            self.choose_output.setEnabled(False); self.reset_output.setEnabled(False)
             self.worker.start()
         except Exception as exc:self.inform(exc)
 
@@ -308,6 +346,7 @@ class MainWindow(QMainWindow):
 
     def unlock(self):
         self.run_button.setEnabled(True); self.cancel_button.setEnabled(False); self.pipeline.setEnabled(True); self.policy.setEnabled(True); self.z_unit.setEnabled(True); self.mode.tabBar().setEnabled(True)
+        self.choose_output.setEnabled(True); self.refresh_output_directory()
 
     def on_event(self,row,id,status,message):
         self.log.append(f'{"Lote "+str(row+1)+" · " if row>=0 else ""}{id}: {status}'+(' · '+message if message else ''))

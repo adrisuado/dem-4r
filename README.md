@@ -40,7 +40,8 @@ mediante `pip install --no-deps -e .`. NumPy se limita a `<2.3` por el uso de
 4. Haga doble clic sobre cada nodo para revisar sus entradas, parámetros, nombre,
    tipo de salida y política de exportación. En **Recortar**, indique
    `[xmin,ymin,xmax,ymax]` en el CRS de trabajo; vacío conserva toda la extensión.
-5. Elija **Ninguno**, **Finales** o **Detallado** y pulse **Ejecutar**.
+5. En **Carpeta de salida → Elegir carpeta…**, seleccione dónde guardar los
+   productos. Elija **Ninguno**, **Finales** o **Detallado** y pulse **Ejecutar**.
 6. Consulte las capas temporales, seleccione una para ver estadísticas, y use
    **Simbología** para cambiar colores/contraste. Los cambios de estilo no ejecutan
    algoritmos ni alteran el raster.
@@ -91,6 +92,39 @@ reproyección y conecte Fill depressions a su salida si hace falta.
 - CSV/XLSX de morfometría aparecen como tablas; su GeoPackage auxiliar puede verse
   como vector. Los archivos auxiliares se incluyen en las exportaciones.
 
+## Carpeta de salida
+
+La fila **Carpeta de salida**, encima de Ejecutar, muestra siempre el destino.
+**Elegir carpeta…** lo cambia y guarda la selección en el proyecto; **Abrir salida**
+abre ese destino y **Usar proyecto** restaura la ubicación original. También se
+usa como ubicación inicial al exportar una capa manualmente.
+
+Los productos se organizan en subcarpetas por categoría y ejecución, con nombres
+únicos para conservar resultados anteriores. En lotes se añade una carpeta por
+ejecución y por DEM. Temporales, caché y registros permanecen en el proyecto.
+Cambiar la carpeta permite reutilizar la caché y exportar al nuevo destino.
+**Finales** guarda las salidas terminales; **Detallado** también los intermedios;
+**Ninguno** conserva solo temporales salvo nodos marcados para exportar siempre.
+La receta portátil del flujo no impone una carpeta del equipo de origen.
+
+## Pendiente directamente en geográficas
+
+Puede conectar **Recortar por máscara → Pendiente** sobre EPSG:4326. Declare la
+unidad Z real (m, ft o us-ft) y elija Horn o Zevenbergen–Thorne y grados o porcentaje.
+No se remuestrea el DEM ni se usa una constante universal de metros por grado.
+La salida registra el modelo de distancia, el elipsoide y los tamaños métricos
+mínimos/máximos de celda. NoData conserva el tratamiento estricto de vecindad 3×3;
+los bordes son NoData por defecto y la opción local replica el borde.
+
+Se adopta el enfoque de distancias elipsoidales documentado por
+[terra::terrain](https://rspatial.github.io/terra/reference/terrain.html), con una
+implementación propia en NumPy/SciPy y PyProj. No se requiere R. Hay diferencias
+intencionales: aquí se utiliza el elipsoide declarado por el CRS y se ajustan
+ambas distancias por fila; el código de terra consultado usa WGS84 y una distancia
+norte-sur calculada en el ecuador
+([implementación consultada](https://raw.githubusercontent.com/rspatial/terra/master/src/distRaster.cpp)).
+Por ello no se promete igualdad bit a bit con R.
+
 ## Editor de workflow
 
 El editor ofrece vista gráfica y tabla de nodos. Seleccione un nodo y use **Editar /
@@ -139,9 +173,10 @@ la envolvente a un CRS métrico local y de vuelta con bordes densificados. No se
 una constante universal de metros por grado. El margen local admite áreas de hasta
 30° por eje; la salida se limita a los píxeles existentes del raster.
 
-El recorte conserva coordenadas geográficas cuando la entrada es geográfica. Las
-pendientes y demás derivadas métricas siguen requiriendo un nodo **Reproyectar**
-antes de su cálculo; la plantilla por máscara ya incluye ese paso.
+El recorte conserva coordenadas geográficas cuando la entrada es geográfica.
+**Pendiente** admite esa salida directamente, sin un nodo Reproyectar. Las demás
+derivadas métricas mantienen su requisito de CRS proyectado; la plantilla de
+relieve con TPI y curvatura incluye ese paso.
 
 La selección de un nodo sirve como entrada inicial al añadir otro. Cada entrada
 tiene su propio selector: las operaciones de varios rasters no asumen que todos
@@ -175,11 +210,15 @@ visualizar en Simbología; use **Extraer banda** para encadenarla a otro algorit
 
 ### Convenciones y unidades
 
-- Las derivadas métricas requieren CRS proyectado, ejes alineados al norte y unidad
-  horizontal conocida. Píxeles rectangulares usan resoluciones X/Y independientes.
-  CRS geográfico o raster rotado producen un error con indicación de reproyectar.
+- Pendiente acepta CRS geográfico o proyectado, conservando CRS, extensión,
+  resolución y alineación. En geográficas calcula distancias X/Y en metros por
+  fila con `pyproj.Geod` y el elipsoide del CRS. Horn usa ocho vecinos;
+  Zevenbergen–Thorne usa diferencias centrales. Salida en grados o porcentaje.
+- Las otras derivadas métricas requieren CRS proyectado y unidad horizontal
+  conocida. Píxeles rectangulares usan distancias X/Y independientes. Los rasters
+  rotados deben rectificarse antes de calcular derivadas.
 - El factor Z es adicional a la conversión explícita de metros/pies. No sustituye
-  la reproyección de coordenadas geográficas.
+  el cálculo de distancias horizontales según la latitud.
 - TPI: centro menos media de vecinos, excluyendo centro. La opción estandarizada
   divide por SD local; vecindades constantes producen NoData en esa modalidad.
 - TRI: raíz de la suma de diferencias cuadráticas (Riley), no media cuadrática.

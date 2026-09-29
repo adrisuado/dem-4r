@@ -27,10 +27,10 @@ def test_vertical_conversion(run_algorithm,dem,tmp_path):
     assert np.allclose(a[1:-1,1:-1],np.degrees(np.arctan(np.hypot(.2,.3))))
 
 
-def test_geographic_blocked(tmp_path,dem):
+def test_other_metric_derivatives_still_require_projected_crs(tmp_path,dem):
     profile=dem[2]|{'crs':'EPSG:4326'}
     path=write_raster(tmp_path/'geo.tif',dem[1],profile)
-    node=ProcessingNode('slope'); project=Project(tmp_path/'p',Workflow(nodes=[node]),{'$dem':path})
+    node=ProcessingNode('curvature'); project=Project(tmp_path/'p',Workflow(nodes=[node]),{'$dem':path})
     r=Pipeline(project).run()
     assert 'reproyecte' in r.errors[node.id]
 
