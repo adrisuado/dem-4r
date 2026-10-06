@@ -54,7 +54,7 @@ class Pipeline:
         self.on_event=on_event or (lambda *args:None)
         self.registry=load_algorithms()
         self.versions={'dem-tool':__version__}
-        for package in ('numpy','scipy','rasterio','geopandas','pysheds','pyproj'):
+        for package in ('numpy','scipy','rasterio','geopandas','pysheds','pyproj','numba'):
             self.versions[package]=importlib.metadata.version(package)
         self.versions['gdal']=rasterio.__gdal_version__
         # Invalidate caches after local source edits, even before a release version bump.

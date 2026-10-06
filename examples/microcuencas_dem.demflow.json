@@ -1,0 +1,171 @@
+{
+  "format": "dem-workflow",
+  "bundle_version": 1,
+  "workflow": {
+    "nodes": [
+      {
+        "algorithm": "reproject",
+        "inputs": {
+          "dem": "$dem"
+        },
+        "parameters": {
+          "crs": "EPSG:32717",
+          "resolution": 60.0,
+          "resampling": "average"
+        },
+        "name": "DEM_metrico",
+        "id": "dem_metric",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "fill_depressions",
+        "inputs": {
+          "dem": "dem_metric"
+        },
+        "parameters": {},
+        "name": "DEM_acondicionado",
+        "id": "fill",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "flow_direction",
+        "inputs": {
+          "dem": "fill"
+        },
+        "parameters": {},
+        "name": "Direccion_D8",
+        "id": "direction",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "flow_accumulation",
+        "inputs": {
+          "direction": "direction"
+        },
+        "parameters": {
+          "units": "km2"
+        },
+        "name": "Acumulacion_km2",
+        "id": "accumulation",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "streams",
+        "inputs": {
+          "accumulation": "accumulation"
+        },
+        "parameters": {
+          "threshold": 0.45,
+          "unit": "km2",
+          "vector": false,
+          "strahler": false
+        },
+        "name": "Cauces_umbral",
+        "id": "streams",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "stream_links",
+        "inputs": {
+          "direction": "direction",
+          "streams": "streams"
+        },
+        "parameters": {},
+        "name": "Tramos_D8",
+        "id": "links",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "int32",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "subcatchments",
+        "inputs": {
+          "direction": "direction",
+          "links": "links"
+        },
+        "parameters": {},
+        "name": "Microcuencas_raster",
+        "id": "subcatchments",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "int32",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "polygonize",
+        "inputs": {
+          "dem": "subcatchments"
+        },
+        "parameters": {
+          "connectivity": 4
+        },
+        "name": "Microcuencas_poligonos",
+        "id": "polygons",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "dissolve",
+        "inputs": {
+          "vector": "polygons"
+        },
+        "parameters": {},
+        "name": "Microcuencas_por_tramo",
+        "id": "dissolve",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      },
+      {
+        "algorithm": "finalize_microbasins",
+        "inputs": {
+          "vector": "dissolve"
+        },
+        "parameters": {
+          "min_area_km2": 0.1
+        },
+        "name": "Microcuencas_finales",
+        "id": "microbasins",
+        "enabled": true,
+        "export": "inherit",
+        "output_dtype": "float64",
+        "output_nodata": null
+      }
+    ],
+    "name": "Microcuencas por tramos D8",
+    "export_policy": "final",
+    "prefix": "",
+    "suffix": "",
+    "schema_version": 1
+  },
+  "variables": {
+    "$dem": {
+      "kind": "raster",
+      "used_by": [
+        "DEM_metrico / dem"
+      ],
+      "required": true,
+      "file_hint": ""
+    }
+  },
+  "vertical_unit": "m"
+}

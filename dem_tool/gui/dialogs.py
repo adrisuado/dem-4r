@@ -12,6 +12,7 @@ from dem_tool.io.raster_io import OUTPUT_DTYPES
 from dem_tool.algorithms.intervals import normalize_interval,validate_rules,INTERVALS
 
 LABELS={'method':'Método','radius':'Radio','iterations':'Iteraciones','max_gap':'Tamaño máximo del gap (píxeles)',
+    'min_area_km2':'Área mínima por parte (km²)','id_prefix':'Prefijo de identificadores',
     'keep_large':'Conservar huecos mayores','kernel':'Kernel (lado impar)','sigma':'Sigma','nodata':'Tratamiento NoData',
     'vertical_unit':'Unidad vertical','z_factor':'Factor Z adicional','edges':'Bordes','units':'Unidad de salida',
     'unit':'Unidad de escala / umbral','shape':'Forma de vecindad','standardize':'Estandarizar TPI',

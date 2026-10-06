@@ -49,6 +49,8 @@ def main():
     app=QApplication.instance() or QApplication([])
     window=MainWindow(projects[0]); window.resize(1560,1000); window.show(); app.processEvents()
     window.select_layer(projects[0].layers[3]); window.pipeline.show_workflow(projects[0].workflow,{n.id:'Completed' for n in projects[0].workflow.nodes}); window.pipeline.fit(); app.processEvents()
+    from gui_wait import wait_views
+    wait_views(window)
     window.grab().save(str(root/'gui_relief.png'))
     window.hide(); window.deleteLater(); app.processEvents()
     atomic_json(root/'acceptance_report.json',results)

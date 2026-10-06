@@ -5,3 +5,6 @@ __pycache__/
 workspace/
 test-output/
 .coverage
+
+# Documentación técnica interna (solo local)
+/docs/GUIA_TECNICA_INTERNA.html

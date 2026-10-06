@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from pathlib import Path
 import os
 import numpy as np
@@ -91,15 +92,16 @@ def align_check(profiles):
 
 class StatisticsCache:
     def __init__(self):
-        self.values = {}
-        self.samples = {}
+        self.values = OrderedDict()
+        self.samples = OrderedDict()
 
     def get(self, path, bins=50,band=1):
         path = Path(path)
         s = path.stat()
-        key = (str(path), s.st_mtime_ns, s.st_size, int(bins),int(band))
+        sidecars=tuple((p.stat().st_mtime_ns,p.stat().st_size) for p in (Path(str(path)+'.msk'),Path(str(path)+'.aux.xml')) if p.exists())
+        key = (str(path), s.st_mtime_ns, s.st_size, int(bins),int(band),sidecars)
         if key not in self.values:
-            sample_key=(str(path),s.st_mtime_ns,s.st_size,int(band))
+            sample_key=(str(path),s.st_mtime_ns,s.st_size,int(band),sidecars)
             if sample_key not in self.samples:
                 with rasterio.open(path) as src:
                     total=src.width*src.height
@@ -108,6 +110,8 @@ class StatisticsCache:
                     a=src.read(band,out_shape=(h,w),masked=True).astype(float).filled(np.nan)
                     a[~np.isfinite(a)]=np.nan
                     self.samples[sample_key]=(a,src.profile.copy(),factor>1)
+            self.samples.move_to_end(sample_key)
+            while len(self.samples)>4:self.samples.popitem(last=False)
             a,p,sampled=self.samples[sample_key]
             v = a[np.isfinite(a)]
             stats = {('valid_sample_pixels' if sampled else 'valid_pixels'): int(v.size),
@@ -124,4 +128,6 @@ class StatisticsCache:
                              median=float(np.median(v)), sd=float(v.std()),
                              percentiles=dict(zip(('p2', 'p25', 'p50', 'p75', 'p98'), map(float, np.percentile(v, [2,25,50,75,98])))))
             self.values[key] = (stats, np.histogram(v, bins=int(bins)))
+        self.values.move_to_end(key)
+        while len(self.values)>16:self.values.popitem(last=False)
         return self.values[key]

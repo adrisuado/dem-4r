@@ -39,6 +39,8 @@ def main():
     app=QApplication.instance() or QApplication([])
     window=MainWindow(project); window.resize(1600,1060); window.show(); app.processEvents()
     window.statuses=report.statuses; window.refresh(); window.pipeline.fit(); app.processEvents()
+    from gui_wait import wait_views
+    wait_views(window)
     window.grab().save(str(root/'pendiente_geografica_salida.png')); window.hide()
     result={'input':str(source),'crs':str(p['crs']),'shape':list(out.shape),
             'valid_pixels':int(np.isfinite(out).sum()),'min_degrees':float(np.nanmin(out)),

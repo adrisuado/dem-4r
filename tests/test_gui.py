@@ -4,11 +4,25 @@ from dem_tool.gui.main_window import MainWindow
 from dem_tool.gui.dialogs import NodeDialog
 
 
+def wait_views(window, timeout=15000):
+    from PySide6.QtTest import QTest
+    from time import monotonic
+    app=QApplication.instance()
+    end=monotonic()+timeout/1000
+    while True:
+        app.processEvents()
+        if not window.map.loading and not window.statistics.loading:break
+        assert monotonic()<end, 'La vista no terminó de cargar'
+        QTest.qWait(10)
+    window.map.canvas.draw()
+
+
 def test_gui_load_render_and_form(tmp_path,dem):
     app=QApplication.instance() or QApplication([])
     p=Project(tmp_path/'gui',Workflow(nodes=[ProcessingNode('slope',id='s')]),{'$dem':dem[0]},[Layer(dem[0],temporary=False)])
     window=MainWindow(p); window.show(); app.processEvents()
     window.select_layer(p.layers[0]); app.processEvents()
+    wait_views(window)
     assert window.statistics.layer.path==dem[0]
     assert window.map.bounds
     assert any(hasattr(i,'toPlainText') and 'slope' in i.toPlainText() for i in window.pipeline.scene.items())
@@ -16,6 +30,7 @@ def test_gui_load_render_and_form(tmp_path,dem):
     dialog.controls['units'][0].setCurrentText('percent')
     assert dialog.build().parameters['units']=='percent'
     assert window.grab().save(str(tmp_path/'gui.png'))
+    wait_views(window)
     window.hide(); window.deleteLater(); app.processEvents()
 
 
@@ -29,6 +44,7 @@ def test_gui_worker_runs_real_pipeline(tmp_path,dem):
     app.processEvents()
     assert window.statuses['s']=='Completed'
     assert len(window.project.layers)>=1 and window.run_button.isEnabled()
+    wait_views(window)
     window.hide(); window.deleteLater(); app.processEvents()
 
 
@@ -37,6 +53,7 @@ def test_histogram_auto_frame_groups_and_detached_graph(tmp_path,dem):
     layer=Layer(dem[0],temporary=False)
     p=Project(tmp_path/'view',Workflow(nodes=[ProcessingNode('slope',id='s')]),{'$dem':dem[0]},[layer])
     window=MainWindow(p); window.show(); app.processEvents(); window.map.canvas.draw()
+    wait_views(window)
     assert window.statistics.layer.path==dem[0]  # no tree selection required
     assert window.statistics.figure.axes[0].patches
     assert window.map.ax.get_position().width>.85
@@ -52,6 +69,7 @@ def test_histogram_auto_frame_groups_and_detached_graph(tmp_path,dem):
     assert window.pipeline.statuses['s']=='Completed'
     layer.visible=False; window.map.draw_layers(p.layers); app.processEvents()
     assert window.statistics.layer is None
+    wait_views(window)
     window.hide(); window.deleteLater(); app.processEvents()
 
 
@@ -115,4 +133,5 @@ def test_output_picker_persists_and_worker_exports_there(tmp_path,dem,monkeypatc
     window.reset_output.click()
     assert window.output_path.text()==str(p.root)
     assert Project.load(p.root/'project.json').output_directory is None
+    wait_views(window)
     window.hide(); window.deleteLater(); app.processEvents()

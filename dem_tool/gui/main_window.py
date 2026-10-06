@@ -23,6 +23,7 @@ from .layer_panel import LayerPanel
 from .pipeline_panel import PipelinePanel,WorkflowWindow
 from .dialogs import NodeDialog,StyleDialog
 from .workflow_dialog import WorkflowVariablesDialog
+from .microbasins_dialog import MicrobasinsDialog
 from dem_tool.core.workflow_bundle import export_bundle,load_bundle
 
 
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
         QApplication.instance().setFont(QFont('DejaVu Sans',9))
         self.project=project or Project(Path.cwd()/'workspace'/('Proyecto_'+datetime.now().strftime('%Y%m%d_%H%M%S')))
         self.registry=load_algorithms(); self.selected_layer=None; self.worker=None; self.statuses={}; self.batch_items=[]; self.batch_states={}
+        self.removed_layers=[]; self._view_project=self.project
         self.setWindowTitle('DEM Workflows · Procesamiento geomorfométrico'); self.resize(1560,1000); self.setMinimumSize(1080,760); self.setStyleSheet(STYLE)
         central=QWidget(); outer=QVBoxLayout(central); outer.setContentsMargins(14,10,14,8); self.setCentralWidget(central)
         header=QHBoxLayout(); brand=QLabel('DEM / WORKFLOWS'); brand.setObjectName('brand'); header.addWidget(brand); header.addStretch()
@@ -89,7 +91,16 @@ class MainWindow(QMainWindow):
         vertical=QSplitter(Qt.Orientation.Vertical); outer.addWidget(vertical,1)
         self.mode=QTabWidget(); vertical.addWidget(self.mode)
         self.individual=QSplitter(Qt.Orientation.Horizontal); self.mode.addTab(self.individual,'Individual / mapa')
-        self.layers=LayerPanel(); self.layers.setMinimumWidth(195); self.individual.addWidget(self.layers)
+        layer_holder=QWidget(); layer_layout=QVBoxLayout(layer_holder); layer_layout.setContentsMargins(0,0,0,0)
+        self.layers=LayerPanel(); self.layers.setMinimumWidth(195); layer_layout.addWidget(self.layers)
+        hint=QLabel('Ctrl / Mayús: selección múltiple'); layer_layout.addWidget(hint)
+        layer_buttons=QHBoxLayout(); layer_layout.addLayout(layer_buttons)
+        self.remove_layers_button=QPushButton('Quitar (0)'); self.remove_layers_button.setEnabled(False)
+        self.remove_layers_button.setToolTip('Supr: quita las capas del entorno. Conserva archivos y entradas del flujo.')
+        self.undo_layers_button=QPushButton('Deshacer'); self.undo_layers_button.setEnabled(False)
+        self.undo_layers_button.setToolTip('Restaura el último grupo de capas retiradas. Ctrl+Z dentro del árbol de capas.')
+        layer_buttons.addWidget(self.remove_layers_button); layer_buttons.addWidget(self.undo_layers_button)
+        self.individual.addWidget(layer_holder)
         self.map=MapView(); self.individual.addWidget(self.map)
         self.statistics=StatisticsPanel(); self.individual.addWidget(self.statistics); self.individual.setSizes([230,990,280])
         batch=QWidget(); bl=QVBoxLayout(batch); self.mode.addTab(batch,'Procesamiento por lotes')
@@ -120,6 +131,9 @@ class MainWindow(QMainWindow):
         self.cancel_button=QPushButton('■ Cancelar'); self.cancel_button.setEnabled(False); self.cancel_button.clicked.connect(self.cancel); runbar.addWidget(self.cancel_button)
         self.log=QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(85); self.log.setPlaceholderText('Registro de ejecución, advertencias y errores'); outer.addWidget(self.log)
         self.layers.selected.connect(self.select_layer); self.layers.visibility_changed.connect(lambda:self.map.draw_layers(self.project.layers,True)); self.map.message.connect(self.statusBar().showMessage)
+        self.layers.remove_requested.connect(self.remove_selected_layers); self.remove_layers_button.clicked.connect(self.remove_selected_layers)
+        self.layers.restore_requested.connect(self.restore_layers); self.undo_layers_button.clicked.connect(self.restore_layers)
+        self.layers.selection_count.connect(self.update_layer_actions)
         self.map.plotted_raster.connect(self.on_plotted_raster)
         self.pipeline.add_requested.connect(self.add_node); self.pipeline.edit_requested.connect(self.edit_node); self.pipeline.action_requested.connect(self.node_action); self.pipeline.template_requested.connect(self.template)
         self.create_menu(); self.refresh()
@@ -138,10 +152,46 @@ class MainWindow(QMainWindow):
         self.project.workflow.export_policy=self.policy.currentData(); self.project.vertical_unit=self.z_unit.currentText()
 
     def refresh(self):
+        if self._view_project is not self.project:
+            self._view_project=self.project; self.removed_layers.clear(); self.map.reset(); self.select_layer(None)
         self.project_label.setText(self.project.root.name+'   /   '+self.project.workflow.name)
         self.refresh_output_directory()
-        self.layers.populate(self.project.layers,self.project.sources); self.map.draw_layers(self.project.layers)
+        self.layers.populate(self.project.layers,self.project.sources); self.map.draw_layers(self.project.layers,True)
+        self.update_layer_actions(len(self.layers.selected_layers()))
         self.pipeline.show_workflow(self.project.workflow,self.statuses)
+
+    def update_layer_actions(self,count):
+        """Sincroniza contadores, botones y deshacer del árbol."""
+        self.remove_layers_button.setText(f'Quitar ({count})'); self.remove_layers_button.setEnabled(count>0)
+        self.undo_layers_button.setEnabled(bool(self.removed_layers)); self.layers.undo_action.setEnabled(bool(self.removed_layers))
+
+    def remove_selected_layers(self):
+        """Retira un grupo del proyecto sin borrar archivos ni referencias del DAG."""
+        selected={id(l) for l in self.layers.selected_layers()}
+        removed=[(i,l) for i,l in enumerate(self.project.layers) if id(l) in selected]
+        if not removed:return
+        previous=list(self.project.layers)
+        self.project.layers=[l for l in previous if id(l) not in selected]
+        try:self.sync(); self.project.save()
+        except Exception as exc:
+            self.project.layers=previous; self.inform(exc); return
+        self.removed_layers.append(removed); self.removed_layers=self.removed_layers[-10:]
+        if self.selected_layer and id(self.selected_layer) in selected:
+            self.select_layer(next((l for l in reversed(self.project.layers) if l.visible and l.kind=='raster'),None))
+        self.refresh()
+        self.statusBar().showMessage(f'{len(removed)} capas retiradas. Archivos y entradas del flujo conservados. Puede deshacer.')
+
+    def restore_layers(self):
+        """Restaura orden y estilo del último grupo retirado, hasta diez acciones."""
+        if not self.removed_layers:return
+        previous=list(self.project.layers); removed=self.removed_layers[-1]
+        for index,layer in removed:
+            if not any(l is layer for l in self.project.layers):self.project.layers.insert(min(index,len(self.project.layers)),layer)
+        try:self.project.save()
+        except Exception as exc:
+            self.project.layers=previous; self.inform(exc); return
+        self.removed_layers.pop(); self.refresh()
+        self.statusBar().showMessage(f'{len(removed)} capas restauradas.')
 
     def refresh_output_directory(self):
         self.output_path.setText(str(self.project.output_root)); self.output_path.setCursorPosition(0)
@@ -176,8 +226,10 @@ class MainWindow(QMainWindow):
     def inform(self,text):QMessageBox.warning(self,'DEM Workflows',str(text))
 
     def on_plotted_raster(self,layer):
-        self.statistics.show_layer(layer)
-        if layer:self.selected_layer=layer; self.map.selected=layer
+        current=self.selected_layer
+        if current and any(l is current for l in self.project.layers) and current.visible:
+            self.statistics.show_layer(current)
+        else:self.select_layer(layer)
 
     def toggle_graph_window(self):
         if self.graph_window and self.graph_window.isVisible():self.graph_window.close(); return
@@ -221,11 +273,11 @@ class MainWindow(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Abrir vector / máscara','','Vector (*.gpkg *.shp *.geojson)')
         if path:
             try:
-                import geopandas as gpd
-                frame=gpd.read_file(path)
-                if frame.empty or not frame.crs:raise ValueError('Vector vacío o sin CRS.')
+                import pyogrio
+                info=pyogrio.read_info(path,force_feature_count=True)
+                if info['features']==0 or not info['crs']:raise ValueError('Vector vacío o sin CRS.')
                 layer=Layer(path,kind='vector',temporary=False); self.project.layers.append(layer)
-                self.project.sources['$point' if all(frame.geometry.geom_type=='Point') else '$mask']=layer.path
+                self.project.sources['$point' if info['geometry_type'] in ('Point','Point Z') else '$mask']=layer.path
                 self.refresh(); self.select_layer(layer)
             except Exception as exc:self.inform(exc)
 
@@ -293,6 +345,14 @@ class MainWindow(QMainWindow):
 
     def template(self,name):
         if self.busy():return
+        if name=='Microcuencas por tramos D8':
+            dialog=MicrobasinsDialog(self.project.sources,self)
+            if dialog.exec()!=QDialog.DialogCode.Accepted:return
+            if self.project.workflow.nodes and QMessageBox.question(self,'Plantilla','¿Reemplazar el workflow actual por la plantilla configurada?')!=QMessageBox.StandardButton.Yes:return
+            self.project.workflow=dialog.result_workflow; self.project.sources.update(dialog.result_sources)
+            for key,path in dialog.result_sources.items():
+                if path not in [l.path for l in self.project.layers]:self.project.layers.append(Layer(path,kind='raster' if key=='$dem' else 'vector',temporary=False))
+            self.policy.setCurrentIndex(self.policy.findData('final')); self.statuses={}; self.refresh(); self.pipeline.fit(); return
         if name in ('Relieve básico','Hidrología D8'):
             if self.project.workflow.nodes and QMessageBox.question(self,'Plantilla','¿Reemplazar el workflow actual?')!=QMessageBox.StandardButton.Yes:return
             if name=='Relieve básico':
@@ -486,7 +546,7 @@ class MainWindow(QMainWindow):
         if self.busy():return
         for i,ok,message in validate_batch(self.batch_items,self.project.workflow):self.batch_table.setItem(i,2,QTableWidgetItem(message))
 
-    def help(self):QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(__file__).parents[2]/'README.md')))
+    def help(self):QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(__file__).parents[2]/'docs'/'MANUAL_DE_USUARIO.html')))
 
     def closeEvent(self,event):
         if self.busy():

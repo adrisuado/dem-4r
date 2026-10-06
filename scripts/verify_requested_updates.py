@@ -34,9 +34,13 @@ from dem_tool.gui.main_window import MainWindow
 from dem_tool.gui.dialogs import NodeDialog
 from dem_tool.gui.workflow_dialog import WorkflowVariablesDialog
 app=QApplication([]); window=MainWindow(project); window.resize(1600,1120); window.show(); app.processEvents(); window.pipeline.fit(); app.processEvents()
+from gui_wait import wait_views
+wait_views(window)
 window.grab().save(str(root/'01_mapa_histograma.png'))
 project.layers[0].visible=False; clipped.name='Yanacancha · máscara + 30 m'; project.layers.append(clipped); window.refresh(); app.processEvents()
 window.toggle_graph_window(); app.processEvents(); window.pipeline.fit(); app.processEvents()
+from gui_wait import wait_views
+wait_views(window)
 window.graph_window.grab().save(str(root/'02_flujo_independiente.png'))
 window.graph_window.close(); app.processEvents()
 node=next(n for n in project.workflow.nodes if n.algorithm=='reclassify')

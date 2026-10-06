@@ -4,6 +4,21 @@ Aplicación SIG de escritorio en español para construir, guardar y ejecutar flu
 de procesamiento de modelos digitales de elevación. Interfaz PySide6, motor Python
 sin dependencia de Qt y procesamiento real de GeoTIFF.
 
+**[Manual detallado en HTML](docs/MANUAL_DE_USUARIO.html)**: guía de uso sin conexión,
+con índice, búsqueda, recorridos completos y fichas de las 36 herramientas.
+También se abre desde **Ayuda → Manual de uso** en la aplicación.
+
+En el árbol de capas, **Ctrl / Mayús** permiten seleccionar varios elementos;
+**Quitar (N)** o **Supr** los retira juntos y **Deshacer / Ctrl+Z** los restaura
+(hasta diez acciones en la sesión). Se conservan los archivos y las entradas del
+workflow. El menú contextual permite mostrar u ocultar toda la selección.
+
+El mapa y las estadísticas cargan en segundo plano. El selector **Rápida /
+Equilibrada / Detalle** controla la resolución de pantalla; al acercarse se lee
+la ventana visible. Las vistas y los histogramas se reutilizan con cachés
+acotadas, y el grafo actualiza estados sin reconstruirse. Esto no reduce la
+resolución de los resultados de procesamiento.
+
 ## Abrir en este equipo
 
 **Doble clic en `Iniciar_DEM.cmd`.** El entorno `.venv` está instalado dentro del
@@ -28,6 +43,20 @@ mediante `pip install --no-deps -e .`. NumPy se limita a `<2.3` por el uso de
 `np.in1d` en pysheds 0.5.
 
 ## Primer flujo
+
+Para delimitar automáticamente microcuencas, use **Plantillas → Microcuencas por
+tramos D8**. El asistente permite escoger DEM, AOI poligonal opcional, CRS métrico,
+resolución (60 m), contribución mínima (0,45 km²), margen (5 000 m) y área mínima
+final (0,10 km²). Genera un GeoPackage con `MB_ID`, `LINK` y `AREA_KM2`.
+Los valores son editables; el CRS sugerido debe revisarse para el área de trabajo.
+Son áreas de aporte **local por tramo**, no cuencas completas anidadas.
+
+La receta reutiliza recorte, reproyección, acondicionamiento, D8, acumulación,
+drenajes, poligonización y disolución. Añade separación de tramos por conexiones
+D8, asignación aguas arriba y preparación de polígonos. Las confluencias forman
+parte del tramo aguas abajo. [Metodología y verificación](docs/MICROCUENCAS.md).
+Las recetas reutilizables están en `examples/microcuencas_dem.demflow.json`
+y `examples/microcuencas_aoi.demflow.json`; reasigne las entradas al importarlas.
 
 1. Abra **Archivo → Nuevo proyecto** y elija una carpeta. El proyecto inicial se
    crea automáticamente en `workspace/Proyecto_fecha_hora`.

@@ -11,5 +11,7 @@ app=QApplication([])
 project=Project.load(root/'relief'/'project.json')
 window=MainWindow(project); window.resize(1560,1100); window.show(); app.processEvents()
 window.select_layer(project.layers[3]); window.pipeline.show_workflow(project.workflow,{n.id:'Completed' for n in project.workflow.nodes}); window.pipeline.fit(); app.processEvents()
+from gui_wait import wait_views
+wait_views(window)
 window.grab().save(str(root/'gui_relief.png'))
 window.hide()
